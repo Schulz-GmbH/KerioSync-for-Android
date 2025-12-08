@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+Thumbs.db
+*diff.txt
+# IDE
+.idea/
+*.iml
+
+# Gradle (nur Caches)
+.gradle/
+
+# Build-Ausgaben
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+**/obj/
+bin/
+gen/
+out/
+
+# Android-Artefakte
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Lokale Konfiguration
+local.properties
+
+# ProGuard (legacy)
+proguard/
+
+# Logs
+*.log
+
+# Keystore & Signing (niemals committen)
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+/keystores/
+
+# NDK (optional)
+ndkBuild/
+
+#other
+*source-code.txt
