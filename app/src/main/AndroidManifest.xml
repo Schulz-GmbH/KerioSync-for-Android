@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="de.schulz.keriosync">
 
-    <!-- Berechtigungen -->
+    <!-- Berechtigungen für Accounts, Kalender und Netzwerk -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Neu: notwendig für setIsSyncable / setSyncAutomatically -->
+    <!-- Nur nötig, wenn du programmatisch setIsSyncable/setSyncAutomatically nutzt -->
     <uses-permission android:name="android.permission.WRITE_SYNC_SETTINGS" />
 
     <application
@@ -22,7 +22,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.KerioSync">
 
-        <!-- Account Settings UI -->
+        <!-- Haupt-Activity: Account-Einstellungen -->
         <activity
             android:name=".ui.AccountSettingsActivity"
             android:exported="true">
@@ -32,7 +32,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Authenticator-Service -->
+        <!-- Account-Authenticator-Service -->
         <service
             android:name=".auth.KerioAuthenticatorService"
             android:exported="true"
@@ -47,20 +47,23 @@
                 android:resource="@xml/authenticator" />
         </service>
 
-        <!-- Kalender Sync-Service -->
+        <!-- Kalender-SyncAdapter-Service -->
         <service
             android:name=".sync.KerioCalendarSyncService"
             android:exported="true"
             android:permission="android.permission.BIND_SYNC_ADAPTER">
 
+            <!-- Signatur für SyncAdapter -->
             <intent-filter>
                 <action android:name="android.content.SyncAdapter" />
             </intent-filter>
 
+            <!-- Konfiguration des SyncAdapters -->
             <meta-data
                 android:name="android.content.SyncAdapter"
                 android:resource="@xml/sync_calendars" />
 
+            <!-- Optional, wird von manchen ROMs benutzt -->
             <meta-data
                 android:name="android.content.SyncAdapterAuthority"
                 android:value="com.android.calendar" />

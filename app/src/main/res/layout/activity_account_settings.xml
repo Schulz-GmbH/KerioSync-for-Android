@@ -1,44 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/layoutRoot"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="24dp">
+    android:layout_height="match_parent">
 
-    <!-- Einfache UI zum Anlegen/Bearbeiten des Kerio-Accounts -->
-
-    <EditText
-        android:id="@+id/edtServerUrl"
+    <LinearLayout
+        android:id="@+id/layoutRoot"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Server-URL (z.B. https://mail.schulz.local)"
-        android:text="sh-dc1.schulz-hygiene.de"
-        android:inputType="textUri" />
+        android:orientation="vertical"
+        android:padding="24dp">
 
-    <EditText
-        android:id="@+id/edtUsername"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:hint="Benutzername"
-        android:text="mustermann@schulz-hygiene.de"
-        android:inputType="textEmailAddress" />
+        <!-- Kerio-Account Basisdaten -->
 
-    <EditText
-        android:id="@+id/edtPassword"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:hint="Passwort"
-        android:text="*olivetti2018#+"
-        android:inputType="textPassword" />
+        <EditText
+            android:id="@+id/edtServerUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Server-URL (z.B. https://sh-dc1.schulz-hygiene.de/webmail/api/jsonrpc/)"
+            android:text="https://sh-dc1.schulz-hygiene.de"
+            android:inputType="textUri" />
 
-    <Button
-        android:id="@+id/btnSave"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:text="Konto speichern" />
+        <EditText
+            android:id="@+id/edtUsername"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="Benutzername (z.B. user@schulz-hygiene.de)"
+            android:text="mustermann@schulz-hygiene.de"
+            android:inputType="textEmailAddress" />
 
-</LinearLayout>
+        <EditText
+            android:id="@+id/edtPassword"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:hint="Passwort"
+            android:text="*olivetti2018#+"
+            android:inputType="textPassword" />
+
+        <!-- SSL / Zertifikate -->
+
+        <CheckBox
+            android:id="@+id/chkTrustAllCerts"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Alle Zertifikate akzeptieren (unsicher – nur für Tests)" />
+
+        <TextView
+            android:id="@+id/txtSslInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Standard: Es werden nur Zertifikate akzeptiert, die vom System als vertrauenswürdig eingestuft sind (System-/Benutzer-CA)." />
+
+        <TextView
+            android:id="@+id/txtCustomCaLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Eigenes CA-Zertifikat für diesen Server:" />
+
+        <TextView
+            android:id="@+id/txtCustomCaInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Kein eigenes Zertifikat ausgewählt."
+            android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnPickCustomCa"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Zertifikat auswählen" />
+
+            <Button
+                android:id="@+id/btnClearCustomCa"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="Zertifikat entfernen" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnSave"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Konto speichern" />
+
+    </LinearLayout>
+</ScrollView>

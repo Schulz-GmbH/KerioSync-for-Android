@@ -22,16 +22,9 @@ public class KerioAccountAuthenticator extends AbstractAccountAuthenticator {
     private final Context mContext;
 
     /**
-     * Account-Typ für Kerio Sync.
-     *
-     * WICHTIG:
-     * Dieser Wert muss mit android:accountType in res/xml/authenticator.xml
-     * und res/xml/sync_calendars.xml übereinstimmen.
-     *
-     * Zur Vermeidung von Tippfehlern verweisen wir direkt auf KerioAccountConstants.
+     * Optionaler Extra-Key, falls du später z.B. eine Server-URL
+     * o.Ä. direkt an die Activity durchreichen möchtest.
      */
-    public static final String ACCOUNT_TYPE = KerioAccountConstants.ACCOUNT_TYPE;
-
     public static final String EXTRA_SERVER_URL = "EXTRA_SERVER_URL";
 
     public KerioAccountAuthenticator(Context context) {
@@ -52,18 +45,18 @@ public class KerioAccountAuthenticator extends AbstractAccountAuthenticator {
                              String[] requiredFeatures,
                              Bundle options) throws NetworkErrorException {
 
+        // Sicherheitscheck: Nur unseren eigenen Account-Typ akzeptieren
+        if (!KerioAccountConstants.ACCOUNT_TYPE.equals(accountType)) {
+            Bundle error = new Bundle();
+            error.putString(AccountManager.KEY_ERROR_MESSAGE,
+                    "Unsupported account type: " + accountType);
+            return error;
+        }
+
         // Wird vom System aufgerufen, wenn du in den Einstellungen
         // „Konto hinzufügen → Kerio Sync“ auswählst.
-
         Intent intent = new Intent(mContext, AccountSettingsActivity.class);
-
-        // WICHTIG:
-        // Die AccountAuthenticatorResponse muss mit dem offiziellen Key
-        // in das Intent gelegt werden, damit die Activity sie über
-        // AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE auslesen kann.
-        intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
-
-        // Kennzeichnen, dass es sich um einen neuen Account handelt
+        intent.putExtra(AccountSettingsActivity.EXTRA_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
         intent.putExtra(AccountSettingsActivity.EXTRA_IS_NEW_ACCOUNT, true);
 
         Bundle bundle = new Bundle();
@@ -84,11 +77,15 @@ public class KerioAccountAuthenticator extends AbstractAccountAuthenticator {
                                Account account,
                                String authTokenType,
                                Bundle options) throws NetworkErrorException {
-        // Kerio verwendet Basic Auth, hier reicht ein Dummy.
+
+        // Kerio verwendet (in unserer aktuellen Planung) Basic Auth.
+        // Für den Android-AccountManager reicht hier ein Dummy-Token
+        // bzw. wir geben nur Account-Daten zurück.
         Bundle result = new Bundle();
         result.putString(AccountManager.KEY_ACCOUNT_NAME, account.name);
         result.putString(AccountManager.KEY_ACCOUNT_TYPE, account.type);
-        // Optional: AccountManager.KEY_AUTHTOKEN setzen, falls du später Tokens verwendest.
+        // Optional: AccountManager.KEY_AUTHTOKEN setzen,
+        // falls du später echte Tokens verwendest.
         return result;
     }
 
@@ -105,13 +102,9 @@ public class KerioAccountAuthenticator extends AbstractAccountAuthenticator {
 
         // Konto-Daten aktualisieren – wir nutzen dieselbe Activity,
         // diesmal im „Update“-Modus.
-
         Intent intent = new Intent(mContext, AccountSettingsActivity.class);
-        intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
+        intent.putExtra(AccountSettingsActivity.EXTRA_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
         intent.putExtra(AccountSettingsActivity.EXTRA_IS_NEW_ACCOUNT, false);
-
-        // Optional: bestehenden Account-Namen übergeben, falls du in der
-        // Activity dessen Daten vorausfüllen möchtest.
         intent.putExtra(AccountManager.KEY_ACCOUNT_NAME, account.name);
 
         Bundle bundle = new Bundle();
