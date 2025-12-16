@@ -15,6 +15,12 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -54,6 +60,23 @@ public class KerioApiClient {
      */
     private static final long DEFAULT_PAST_WINDOW_MS = 180L * 24L * 60L * 60L * 1000L;   // 180 Tage zurück
     private static final long DEFAULT_FUTURE_WINDOW_MS = 365L * 24L * 60L * 60L * 1000L; // 365 Tage vor
+
+    /**
+     * Kerio DateTime Strings (RFC2445-Style):
+     * - UTC:    20251210T110355Z
+     * - Offset: 20251210T120000+0100
+     * - ggf.:   20251210T120000+01:00
+     *
+     * Kerio-Doku nennt UtcDateTime als string, in der Praxis kommt häufig Offset.
+     */
+    private static final DateTimeFormatter KERIO_UTC_Z_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US);
+
+    private static final DateTimeFormatter KERIO_OFFSET_NO_COLON_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssZ", Locale.US); // +0100
+
+    private static final DateTimeFormatter KERIO_OFFSET_COLON_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssXXX", Locale.US); // +01:00
 
     /**
      * Vollständige JSON-RPC-Endpoint-URL, z. B.
@@ -103,15 +126,6 @@ public class KerioApiClient {
     /**
      * Normalisiert die vom Benutzer eingegebene URL zu einer
      * Kerio-JSON-RPC-Endpoint-URL.
-     *
-     * Beispiele:
-     * "sh-dc1.schulz-hygiene.de"
-     * "https://sh-dc1.schulz-hygiene.de"
-     *
-     * werden zu:
-     * "https://sh-dc1.schulz-hygiene.de/webmail/api/jsonrpc/"
-     *
-     * Wenn bereits "jsonrpc" in der URL vorkommt, wird nichts angehängt.
      */
     private static String normalizeKerioApiUrl(String apiUrl) {
         if (apiUrl == null) {
@@ -124,17 +138,13 @@ public class KerioApiClient {
             apiUrl = "https://" + apiUrl;
         }
 
-        // Eventuelle nachträgliche Slashes am Ende entfernen
         while (apiUrl.endsWith("/")) {
             apiUrl = apiUrl.substring(0, apiUrl.length() - 1);
         }
 
         String lower = apiUrl.toLowerCase(Locale.ROOT);
         if (!lower.contains("jsonrpc")) {
-            // Standard-Kerio-Endpoint anhängen
             apiUrl = apiUrl + "/webmail/api/jsonrpc/";
-        } else {
-            // Wenn Benutzer bereits komplette URL inkl. jsonrpc angegeben hat, nichts verändern
         }
 
         return apiUrl;
@@ -271,73 +281,71 @@ public class KerioApiClient {
             return;
         }
 
-        JSONArray occurrences = result.optJSONArray("occurrences");
-        if (occurrences == null) {
-            Log.i(TAG, "parseEventsResponse(): keine occurrences im Ergebnis");
+        JSONArray list = result.optJSONArray("list");
+        if (list == null) {
+            list = result.optJSONArray("occurrences");
+        }
+
+        if (list == null) {
+            Log.i(TAG, "parseEventsResponse(): keine list/occurrences im Ergebnis");
             return;
         }
 
-        for (int i = 0; i < occurrences.length(); i++) {
-            JSONObject occ = occurrences.optJSONObject(i);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject occ = list.optJSONObject(i);
             if (occ == null) {
-                continue;
-            }
-
-            JSONObject eventJson = occ.optJSONObject("event");
-            if (eventJson == null) {
                 continue;
             }
 
             RemoteEvent evt = new RemoteEvent();
 
-            // ID / UID (Event-ID)
-            evt.uid = eventJson.optString("id", null);
-
-            // Occurrence-spezifische ID (wichtig bei Serien/Vorkommen)
-            evt.occurrenceId = occ.optString("id", null);
-
-            // Kalender-Zuordnung
+            evt.uid = occ.optString("id", null);
+            evt.eventId = occ.optString("eventId", null);
             evt.calendarId = calendar.id;
 
-            // Titel / Beschreibung / Ort
-            evt.summary = eventJson.optString("summary", "");
-            evt.description = eventJson.optString("description", "");
-            evt.location = eventJson.optString("location", "");
+            evt.summary = occ.optString("summary", "");
+            evt.description = occ.optString("description", "");
+            evt.location = occ.optString("location", "");
 
-            // Startzeit
-            JSONObject startJson = eventJson.optJSONObject("start");
-            if (startJson != null) {
-                evt.dtStartUtcMillis = parseUtcDateTime(startJson);
+            String startStr = occ.optString("start", null);
+            if (startStr != null && !startStr.isEmpty()) {
+                evt.dtStartUtcMillis = parseKerioUtcDateTimeString(startStr);
             }
 
-            // Endzeit
-            JSONObject endJson = eventJson.optJSONObject("end");
-            if (endJson != null) {
-                evt.dtEndUtcMillis = parseUtcDateTime(endJson);
+            String endStr = occ.optString("end", null);
+            if (endStr != null && !endStr.isEmpty()) {
+                evt.dtEndUtcMillis = parseKerioUtcDateTimeString(endStr);
             }
 
-            // Letzte Änderung
-            JSONObject lmJson = eventJson.optJSONObject("lastModificationTime");
-            if (lmJson != null) {
-                evt.lastModifiedUtcMillis = parseUtcDateTime(lmJson);
-                // Kompatibilität: altes Feld spiegeln
+            String lmStr = occ.optString("lastModificationTime", null);
+            if (lmStr != null && !lmStr.isEmpty()) {
+                evt.lastModifiedUtcMillis = parseKerioUtcDateTimeString(lmStr);
                 evt.lastModifiedUtc = evt.lastModifiedUtcMillis;
+            } else {
+                evt.lastModifiedUtcMillis = 0L;
+                evt.lastModifiedUtc = 0L;
             }
 
-            // Ganztägig?
-            evt.allDay = eventJson.optBoolean("isAllDay", false);
+            evt.allDay = occ.optBoolean("isAllDay", false);
 
-            out.add(evt);
+            if (evt.dtEndUtcMillis <= 0 && evt.dtStartUtcMillis > 0) {
+                evt.dtEndUtcMillis = evt.dtStartUtcMillis + (30L * 60L * 1000L);
+            }
+
+            if (evt.uid == null || evt.uid.isEmpty()) {
+                if (evt.eventId != null && evt.dtStartUtcMillis > 0) {
+                    evt.uid = evt.eventId + "@" + evt.dtStartUtcMillis;
+                }
+            }
+
+            if (evt.uid != null && !evt.uid.isEmpty()) {
+                out.add(evt);
+            }
         }
 
         Log.i(TAG, "parseEventsResponse(): " + out.size() + " Events aus Occurrences.get gelesen.");
     }
 
-    /**
-     * Convenience-Overload für den SyncAdapter:
-     * - nutzt intern mToken
-     * - wenn sinceUtcMillis == 0: Standard-Zeitraum (Vergangenheit+Zukunft)
-     */
     public List<RemoteEvent> fetchEvents(RemoteCalendar calendar, long sinceUtcMillis)
             throws IOException, JSONException {
 
@@ -359,8 +367,10 @@ public class KerioApiClient {
     }
 
     /**
-     * Lädt alle Vorkommen (Occurrences) aus einem Kerio-Kalender in einem
-     * gegebenen Zeitfenster.
+     * Occurrences.get mit Zeitfenster.
+     *
+     * Kerio-Constraint:
+     * - Condition 'end' nur mit 'LessThan'
      */
     public List<RemoteEvent> fetchEvents(String token,
                                          RemoteCalendar calendar,
@@ -370,12 +380,17 @@ public class KerioApiClient {
 
         List<RemoteEvent> events = new ArrayList<>();
 
-        // ----------------- SearchQuery bauen -----------------
+        String windowStartStr = buildKerioUtcString(startUtcMillis);
+
+        // Kerio verlangt end < X (LessThan), Grenze minimal exklusiv.
+        String windowEndStr = buildKerioUtcString(endUtcMillis + 1000L);
+
         JSONObject query = new JSONObject();
 
-        // Felder, die wir zurückhaben wollen
         JSONArray fields = new JSONArray();
         fields.put("id");
+        fields.put("eventId");
+        fields.put("folderId");
         fields.put("summary");
         fields.put("description");
         fields.put("location");
@@ -385,31 +400,26 @@ public class KerioApiClient {
         fields.put("isAllDay");
         query.put("fields", fields);
 
-        // Bedingungen (SearchQuery.conditions)
         JSONArray conditions = new JSONArray();
 
-        // start >= startUtcMillis
-        JSONObject condStart = new JSONObject();
-        condStart.put("fieldName", "start");
-        condStart.put("comparator", "GreaterEq");
-        condStart.put("value", buildKerioUtcString(startUtcMillis));
-        conditions.put(condStart);
+        JSONObject condStartGe = new JSONObject();
+        condStartGe.put("fieldName", "start");
+        condStartGe.put("comparator", "GreaterEq");
+        condStartGe.put("value", windowStartStr);
+        conditions.put(condStartGe);
 
-        // end < endUtcMillis   (Kerio verlangt explizit LessThan für 'end')
-        JSONObject condEnd = new JSONObject();
-        condEnd.put("fieldName", "end");
-        condEnd.put("comparator", "LessThan"); // <-- FIX: NICHT LessEq
-        condEnd.put("value", buildKerioUtcString(endUtcMillis));
-        conditions.put(condEnd);
+        JSONObject condEndLt = new JSONObject();
+        condEndLt.put("fieldName", "end");
+        condEndLt.put("comparator", "LessThan");
+        condEndLt.put("value", windowEndStr);
+        conditions.put(condEndLt);
 
         query.put("conditions", conditions);
         query.put("combining", "And");
 
-        // Paging
         query.put("start", 0);
         query.put("limit", 1000);
 
-        // Sortierung: nach Startzeit aufsteigend
         JSONArray orderBy = new JSONArray();
         JSONObject order = new JSONObject();
         order.put("columnName", "start");
@@ -418,7 +428,6 @@ public class KerioApiClient {
         orderBy.put(order);
         query.put("orderBy", orderBy);
 
-        // --------------- Methoden-Parameter bauen ---------------
         JSONObject params = new JSONObject();
         params.put("token", token);
         params.put("folderIds", new JSONArray().put(calendar.id));
@@ -454,7 +463,7 @@ public class KerioApiClient {
         String requestBody = request.toString();
 
         HttpURLConnection conn = null;
-        String respBody = null;
+        String respBody;
 
         try {
             URL url = new URL(mApiUrl);
@@ -520,19 +529,7 @@ public class KerioApiClient {
                 throw new IOException("HTTP-Fehler " + status + " bei JSON-RPC-Call " + method);
             }
 
-            JSONObject respJson;
-            try {
-                respJson = new JSONObject(respBody);
-            } catch (JSONException e) {
-                String snippet = respBody;
-                if (snippet.length() > 600) {
-                    snippet = snippet.substring(0, 600) + "...";
-                }
-                Log.e(TAG, "JSONException beim Verarbeiten der JSON-RPC-Antwort für Methode "
-                        + method + ": " + e.getMessage()
-                        + "\nAntwort-Body-Ausschnitt:\n" + snippet, e);
-                throw e;
-            }
+            JSONObject respJson = new JSONObject(respBody);
 
             if (respJson.has("error")) {
                 JSONObject error = respJson.getJSONObject("error");
@@ -704,13 +701,10 @@ public class KerioApiClient {
         }
     }
 
-    /**
-     * Repräsentiert ein Kalenderevent in Kerio.
-     */
     public static class RemoteEvent {
-        public String uid;                 // Event-ID
-        public String occurrenceId;        // Occurrence-ID (Vorkommen-ID)
-        public String calendarId;          // Folder-ID
+        public String uid;
+        public String eventId;
+        public String calendarId;
         public String summary;
         public String description;
         public String location;
@@ -718,14 +712,14 @@ public class KerioApiClient {
         public long dtEndUtcMillis;
         public boolean allDay;
 
-        public long lastModifiedUtcMillis; // neu: klare Benennung
-        public long lastModifiedUtc;       // Kompatibilität (Spiegel)
+        public long lastModifiedUtcMillis;
+        public long lastModifiedUtc;
 
         @Override
         public String toString() {
             return "RemoteEvent{" +
                     "uid='" + uid + '\'' +
-                    ", occurrenceId='" + occurrenceId + '\'' +
+                    ", eventId='" + eventId + '\'' +
                     ", calendarId='" + calendarId + '\'' +
                     ", summary='" + summary + '\'' +
                     ", dtStartUtcMillis=" + dtStartUtcMillis +
@@ -738,39 +732,62 @@ public class KerioApiClient {
     }
 
     /**
-     * Wandelt ein UtcDateTime JSON-Objekt in UTC-Millis um.
+     * Kerio DateTime -> epochMillis
      *
-     * Kerio liefert UtcDateTime so:
-     * {
-     * "date": "2024-11-12",
-     * "time": "13:00:00",
-     * "tz": "UTC"
-     * }
+     * Unterstützt:
+     * - 20251210T110355Z
+     * - 20251210T120000+0100
+     * - 20251210T120000+01:00
      */
-    private long parseUtcDateTime(JSONObject obj) throws JSONException {
-        String date = obj.getString("date"); // YYYY-MM-DD
-        String time = obj.getString("time"); // HH:mm:ss
+    private long parseKerioUtcDateTimeString(String kerioDateTime) {
+        if (kerioDateTime == null || kerioDateTime.isEmpty()) {
+            return 0L;
+        }
 
-        String combined = date + "T" + time + "Z"; // ISO8601
+        // 1) UTC Z-Form
+        try {
+            LocalDateTime ldt = LocalDateTime.parse(kerioDateTime, KERIO_UTC_Z_FORMAT);
+            return ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            // weiter
+        } catch (Exception e) {
+            Log.w(TAG, "Konnte Kerio UTC(Z) nicht parsen: '" + kerioDateTime + "'", e);
+        }
 
-        return java.time.Instant.parse(combined).toEpochMilli();
+        // 2) Offset ohne Doppelpunkt (+0100)
+        try {
+            OffsetDateTime odt = OffsetDateTime.parse(kerioDateTime, KERIO_OFFSET_NO_COLON_FORMAT);
+            return odt.toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            // weiter
+        } catch (Exception e) {
+            Log.w(TAG, "Konnte Kerio Offset(+HHmm) nicht parsen: '" + kerioDateTime + "'", e);
+        }
+
+        // 3) Offset mit Doppelpunkt (+01:00)
+        try {
+            OffsetDateTime odt = OffsetDateTime.parse(kerioDateTime, KERIO_OFFSET_COLON_FORMAT);
+            return odt.toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            // weiter
+        } catch (Exception e) {
+            Log.w(TAG, "Konnte Kerio Offset(+HH:mm) nicht parsen: '" + kerioDateTime + "'", e);
+        }
+
+        // 4) Letzter Fallback: ISO-8601
+        try {
+            return Instant.parse(kerioDateTime).toEpochMilli();
+        } catch (Exception e) {
+            Log.w(TAG, "Konnte Kerio DateTime nicht parsen: '" + kerioDateTime + "'", e);
+            return 0L;
+        }
     }
 
     /**
-     * Wandelt einen UTC-Millis-Wert in das Kerio-UtcDateTime-Stringformat um:
-     * Beispiel: 20251210T110355Z
+     * Für Query-Parameter: wir senden UTC im Z-Format.
      */
     private String buildKerioUtcString(long utcMillis) {
-        java.time.Instant instant = java.time.Instant.ofEpochMilli(utcMillis);
-        java.time.ZonedDateTime zdt = java.time.ZonedDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
-        return String.format(
-                java.util.Locale.US,
-                "%04d%02d%02dT%02d%02d%02dZ",
-                zdt.getYear(),
-                zdt.getMonthValue(),
-                zdt.getDayOfMonth(),
-                zdt.getHour(),
-                zdt.getMinute(),
-                zdt.getSecond());
+        Instant instant = Instant.ofEpochMilli(utcMillis);
+        return KERIO_UTC_Z_FORMAT.withZone(ZoneOffset.UTC).format(instant);
     }
 }

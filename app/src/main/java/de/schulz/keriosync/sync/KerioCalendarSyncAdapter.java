@@ -148,7 +148,17 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 List<KerioApiClient.RemoteEvent> remoteEvents =
                         client.fetchEvents(rc, since);
 
+                if (remoteEvents == null) {
+                    Log.w(TAG, "Remote-Events sind NULL für Kalender '" + rc.name + "'. Kein Delete/Upsert.");
+                    continue;
+                }
+
                 Log.d(TAG, "Remote-Events für Kalender '" + rc.name + "': " + remoteEvents.size());
+
+                if (remoteEvents.isEmpty()) {
+                    Log.w(TAG, "Remote-Events sind LEER für Kalender '" + rc.name + "'. " +
+                            "Wenn das unerwartet ist, stimmt meist Query/Parser/Zeitraum nicht.");
+                }
 
                 syncEventsForCalendar(account, localCalId, remoteEvents, syncResult);
             }
@@ -411,8 +421,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Events.DTEND, remote.dtEndUtcMillis);
             values.put(CalendarContract.Events.EVENT_TIMEZONE, "UTC");
             values.put(CalendarContract.Events.ALL_DAY, remote.allDay ? 1 : 0);
+
+            // Sync-Mapping
             values.put(CalendarContract.Events._SYNC_ID, remote.uid);
             values.put(CalendarContract.Events.SYNC_DATA1, String.valueOf(remoteLastMod));
+            values.put(CalendarContract.Events.SYNC_DATA2, remote.eventId); // optional
+            values.put(CalendarContract.Events.DIRTY, 0);
 
             if (local == null) {
                 Uri inserted = mContentResolver.insert(syncEventsUri, values);
