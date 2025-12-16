@@ -171,15 +171,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // Kalender-Sync (lokale <-> Remote-Kalender)
     // ------------------------------------------------------------------------
 
-    /**
-     * Synchronisiert die Kerio-Remote-Kalender mit den lokalen Android-Kalendern
-     * für diesen Account.
-     *
-     * Verknüpfung:
-     * - CalendarContract.Calendars._SYNC_ID = Kerio RemoteCalendar.id
-     *
-     * @return Map remoteCalendarId -> lokale Calendar-ID
-     */
     private Map<String, Long> syncCalendarsForAccount(
             Account account,
             List<KerioApiClient.RemoteCalendar> remoteCalendars,
@@ -187,7 +178,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
         Map<String, Long> localByRemoteId = new HashMap<>();
 
-        // Alle remote IDs in ein Set, damit wir später lokale "Waisen" erkennen
         Set<String> remoteIds = new HashSet<>();
         for (KerioApiClient.RemoteCalendar rc : remoteCalendars) {
             if (rc.id != null) {
@@ -195,7 +185,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
-        // 1. bestehende lokale Kalender für diesen Account einlesen
         Uri calendarsUri = CalendarContract.Calendars.CONTENT_URI;
 
         String[] projection = new String[]{
@@ -218,14 +207,13 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 null
         );
 
-        // Hier merken wir uns auch lokale Kalender, deren _SYNC_ID nicht (mehr) in remoteIds vorkommt
         Map<Long, String> localCalendarRemoteId = new HashMap<>();
 
         if (cursor != null) {
             try {
                 while (cursor.moveToNext()) {
                     long localId = cursor.getLong(0);
-                    String syncId = cursor.getString(1); // _SYNC_ID
+                    String syncId = cursor.getString(1);
                     String displayName = cursor.getString(2);
                     int visible = cursor.getInt(3);
                     int syncEvents = cursor.getInt(4);
@@ -246,14 +234,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
-        // 2. URI als SyncAdapter aufbauen (wichtig für Insert/Update)
         Uri syncCalendarsUri = calendarsUri.buildUpon()
                 .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
                 .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
                 .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
                 .build();
 
-        // 3. Remote-Kalender auf lokale Kalender mappen (Insert/Update)
         for (KerioApiClient.RemoteCalendar rc : remoteCalendars) {
             if (rc.id == null) {
                 Log.w(TAG, "RemoteCalendar ohne ID – wird ignoriert: " + rc);
@@ -277,7 +263,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Calendars.VISIBLE, 1);
             values.put(CalendarContract.Calendars.SYNC_EVENTS, 1);
 
-            values.put(CalendarContract.Calendars.CALENDAR_COLOR, 0xff33b5e5); // Dummy-Farbe oder aus rc.color
+            values.put(CalendarContract.Calendars.CALENDAR_COLOR, 0xff33b5e5);
             values.put(CalendarContract.Calendars.OWNER_ACCOUNT, account.name);
 
             values.put(CalendarContract.Calendars._SYNC_ID, rc.id);
@@ -300,7 +286,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
-        // 4. Lokale Kalender, die es remote nicht mehr gibt, deaktivieren
         for (Map.Entry<Long, String> entry : localCalendarRemoteId.entrySet()) {
             long localId = entry.getKey();
             String remoteId = entry.getValue();
@@ -333,15 +318,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                                        List<KerioApiClient.RemoteEvent> remoteEvents,
                                        SyncResult syncResult) {
 
-        Map<String, KerioApiClient.RemoteEvent> remoteByUid = new HashMap<>();
         Set<String> remoteUids = new HashSet<>();
-
         for (KerioApiClient.RemoteEvent re : remoteEvents) {
             if (re.uid == null || re.uid.isEmpty()) {
                 Log.w(TAG, "RemoteEvent ohne UID – wird ignoriert: " + re);
                 continue;
             }
-            remoteByUid.put(re.uid, re);
             remoteUids.add(re.uid);
         }
 
@@ -350,7 +332,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         String[] projection = new String[]{
                 CalendarContract.Events._ID,
                 CalendarContract.Events._SYNC_ID,
-                CalendarContract.Events.SYNC_DATA1,   // lastModifiedUtc (String/long)
+                CalendarContract.Events.SYNC_DATA1,   // lastModifiedUtcMillis (String/long)
                 CalendarContract.Events.DELETED,
                 CalendarContract.Events.TITLE
         };
@@ -367,7 +349,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         );
 
         Map<String, LocalEventInfo> localByUid = new HashMap<>();
-        Map<Long, LocalEventInfo> localById = new HashMap<>();
 
         if (cursor != null) {
             try {
@@ -390,14 +371,13 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     LocalEventInfo info = new LocalEventInfo();
                     info.id = localId;
                     info.uid = syncId;
-                    info.lastModifiedUtc = lastModifiedLocal;
+                    info.lastModifiedUtcMillis = lastModifiedLocal;
                     info.deleted = (deleted != 0);
                     info.title = title;
 
                     if (syncId != null && !syncId.isEmpty()) {
                         localByUid.put(syncId, info);
                     }
-                    localById.put(localId, info);
                 }
             } finally {
                 cursor.close();
@@ -418,6 +398,10 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
             LocalEventInfo local = localByUid.get(remote.uid);
 
+            long remoteLastMod = (remote.lastModifiedUtcMillis > 0L)
+                    ? remote.lastModifiedUtcMillis
+                    : remote.lastModifiedUtc;
+
             ContentValues values = new ContentValues();
             values.put(CalendarContract.Events.CALENDAR_ID, localCalendarId);
             values.put(CalendarContract.Events.TITLE, remote.summary);
@@ -428,7 +412,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Events.EVENT_TIMEZONE, "UTC");
             values.put(CalendarContract.Events.ALL_DAY, remote.allDay ? 1 : 0);
             values.put(CalendarContract.Events._SYNC_ID, remote.uid);
-            values.put(CalendarContract.Events.SYNC_DATA1, String.valueOf(remote.lastModifiedUtc));
+            values.put(CalendarContract.Events.SYNC_DATA1, String.valueOf(remoteLastMod));
 
             if (local == null) {
                 Uri inserted = mContentResolver.insert(syncEventsUri, values);
@@ -439,12 +423,13 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     syncResult.stats.numInserts++;
                 }
             } else {
-                boolean needsUpdate = false;
-
-                if (remote.lastModifiedUtc > 0 && remote.lastModifiedUtc > local.lastModifiedUtc) {
+                boolean needsUpdate;
+                if (remoteLastMod > 0 && remoteLastMod > local.lastModifiedUtcMillis) {
                     needsUpdate = true;
-                } else if (remote.lastModifiedUtc == 0L) {
+                } else if (remoteLastMod == 0L) {
                     needsUpdate = true;
+                } else {
+                    needsUpdate = false;
                 }
 
                 if (needsUpdate) {
@@ -466,7 +451,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             if (local.uid == null || local.uid.isEmpty()) {
                 continue;
             }
-
             if (!remoteUids.contains(local.uid)) {
                 Uri deleteUri = ContentUris.withAppendedId(syncEventsUri, local.id);
                 int rows = mContentResolver.delete(deleteUri, null, null);
@@ -481,7 +465,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     private static class LocalEventInfo {
         long id;
         String uid;
-        long lastModifiedUtc;
+        long lastModifiedUtcMillis;
         boolean deleted;
         String title;
 
@@ -490,7 +474,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             return "LocalEventInfo{" +
                     "id=" + id +
                     ", uid='" + uid + '\'' +
-                    ", lastModifiedUtc=" + lastModifiedUtc +
+                    ", lastModifiedUtcMillis=" + lastModifiedUtcMillis +
                     ", deleted=" + deleted +
                     ", title='" + title + '\'' +
                     '}';
@@ -501,10 +485,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // SSL-Hilfsmethoden (Custom-CA)
     // ------------------------------------------------------------------------
 
-    /**
-     * Erzeugt eine SSLSocketFactory, die ein einzelnes CA-Zertifikat aus einer URI
-     * (ACTION_OPEN_DOCUMENT) vertraut.
-     */
     private SSLSocketFactory createSslSocketFactoryForCaUri(Context context, Uri caUri) throws Exception {
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
         Certificate ca;
@@ -528,9 +508,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         return sslContext.getSocketFactory();
     }
 
-    /**
-     * TrustManager, der ausschließlich einem übergebenen KeyStore vertraut.
-     */
     private static class SingleKeyStoreX509TrustManager implements X509TrustManager {
         private final X509TrustManager mDelegate;
 
