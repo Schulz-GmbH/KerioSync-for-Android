@@ -12,15 +12,18 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.net.HttpURLConnection;
 import java.net.URL;
+
+import java.nio.charset.StandardCharsets;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,12 +41,13 @@ import javax.net.ssl.X509TrustManager;
 /**
  * JSON-RPC Client für Kerio Connect (Client-API/Webmail).
  *
- * Erwartet eine JSON-RPC-API-URL, z. B.:
- * https://host/webmail/api/jsonrpc/
+ * Enthält:
+ * - Session.login / Session.logout
+ * - Folders.get (Kalenderordner)
+ * - Occurrences.get (Events Pull)
  *
- * Der Konstruktor normalisiert die URL, falls nur der Host angegeben wird:
- * "https://host" --> "https://host/webmail/api/jsonrpc/"
- * "host" --> "https://host/webmail/api/jsonrpc/"
+ * Erweiterung:
+ * - Events.create (Events Push: lokale neu erstellte Termine zum Server)
  */
 public class KerioApiClient {
 
@@ -196,74 +200,150 @@ public class KerioApiClient {
         }
     }
 
+    private void ensureLoggedIn() throws IOException, JSONException {
+        if (mToken == null) {
+            login();
+        }
+    }
+
     // ------------------------------------------------------------------------
-    // Kalender / Events
+    // DTOs
     // ------------------------------------------------------------------------
 
-    public List<RemoteCalendar> fetchCalendars() throws IOException, JSONException {
-        ensureLoggedIn();
+    public static class RemoteCalendar {
+        public String id;
+        public String name;
+        public String owner;
+        public boolean readOnly;
+        public String color;
 
-        List<RemoteCalendar> calendars = new ArrayList<>();
-
-        JSONObject params = new JSONObject();
-        JSONObject resp = call("Folders.get", params, true);
-
-        if (!resp.has("result")) {
-            return calendars;
+        @Override
+        public String toString() {
+            return "RemoteCalendar{" +
+                    "id='" + id + '\'' +
+                    ", name='" + name + '\'' +
+                    ", owner='" + owner + '\'' +
+                    ", readOnly=" + readOnly +
+                    ", color='" + color + '\'' +
+                    '}';
         }
+    }
 
-        JSONObject result = resp.getJSONObject("result");
-        JSONArray folderList = result.optJSONArray("list");
-        if (folderList == null) {
-            return calendars;
+    public static class RemoteEvent {
+        public String uid;
+        public String eventId;
+        public String calendarId;
+
+        public String summary;
+        public String description;
+        public String location;
+
+        public long dtStartUtcMillis;
+        public long dtEndUtcMillis;
+        public boolean allDay;
+
+        public long lastModifiedUtcMillis;
+        public long lastModifiedUtc;
+
+        @Override
+        public String toString() {
+            return "RemoteEvent{" +
+                    "uid='" + uid + '\'' +
+                    ", eventId='" + eventId + '\'' +
+                    ", calendarId='" + calendarId + '\'' +
+                    ", summary='" + summary + '\'' +
+                    ", dtStartUtcMillis=" + dtStartUtcMillis +
+                    ", dtEndUtcMillis=" + dtEndUtcMillis +
+                    ", allDay=" + allDay +
+                    ", lastModifiedUtcMillis=" + lastModifiedUtcMillis +
+                    ", lastModifiedUtc=" + lastModifiedUtc +
+                    '}';
         }
+    }
 
-        for (int i = 0; i < folderList.length(); i++) {
-            JSONObject folder = folderList.optJSONObject(i);
-            if (folder == null) {
-                continue;
-            }
+    /**
+     * Ergebnis für Events.create
+     */
+    public static class CreateResult {
+        public int inputIndex;
+        public String id;
 
-            String type = folder.optString("type", "");
-            if (!"FCalendar".equals(type)) {
-                continue;
-            }
-
-            RemoteCalendar rc = new RemoteCalendar();
-
-            rc.id = folder.optString("id", null);
-            if (rc.id == null || rc.id.isEmpty()) {
-                continue;
-            }
-
-            rc.name = folder.optString("name", rc.id);
-
-            String ownerFromFolder = folder.optString("ownerName",
-                    folder.optString("owner", ""));
-            if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
-                ownerFromFolder = mUsername;
-            }
-            rc.owner = ownerFromFolder;
-
-            boolean readOnly = false;
-            JSONObject rights = folder.optJSONObject("rights");
-            if (rights != null) {
-                boolean canModify = rights.optBoolean("modify", false)
-                        || rights.optBoolean("modifyItems", false)
-                        || rights.optBoolean("full", false)
-                        || rights.optBoolean("owner", false);
-
-                readOnly = !canModify;
-            }
-            rc.readOnly = readOnly;
-
-            rc.color = folder.optString("color", null);
-
-            calendars.add(rc);
+        @Override
+        public String toString() {
+            return "CreateResult{" +
+                    "inputIndex=" + inputIndex +
+                    ", id='" + id + '\'' +
+                    '}';
         }
+    }
 
+// ------------------------------------------------------------------------
+// Kalender / Events
+// ------------------------------------------------------------------------
+public List<RemoteCalendar> fetchCalendars() throws IOException, JSONException {
+    ensureLoggedIn();
+
+    List<RemoteCalendar> calendars = new ArrayList<>();
+
+    JSONObject params = new JSONObject();
+    JSONObject resp = call("Folders.get", params, true);
+
+    if (!resp.has("result")) {
         return calendars;
     }
+
+    JSONObject result = resp.getJSONObject("result");
+    JSONArray folderList = result.optJSONArray("list");
+    if (folderList == null) {
+        return calendars;
+    }
+
+    for (int i = 0; i < folderList.length(); i++) {
+        JSONObject folder = folderList.optJSONObject(i);
+        if (folder == null) {
+            continue;
+        }
+
+        String type = folder.optString("type", "");
+        if (!"FCalendar".equals(type)) {
+            continue;
+        }
+
+        RemoteCalendar rc = new RemoteCalendar();
+
+        rc.id = folder.optString("id", null);
+        if (rc.id == null || rc.id.isEmpty()) {
+            continue;
+        }
+
+        rc.name = folder.optString("name", rc.id);
+
+        String ownerFromFolder = folder.optString("ownerName",
+                folder.optString("owner", ""));
+        if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
+            ownerFromFolder = mUsername;
+        }
+        rc.owner = ownerFromFolder;
+
+        boolean readOnly = false;
+        JSONObject rights = folder.optJSONObject("rights");
+        if (rights != null) {
+            boolean canModify = rights.optBoolean("modify", false)
+                    || rights.optBoolean("modifyItems", false)
+                    || rights.optBoolean("full", false)
+                    || rights.optBoolean("owner", false);
+
+            readOnly = !canModify;
+        }
+        rc.readOnly = readOnly;
+
+        rc.color = folder.optString("color", null);
+
+        calendars.add(rc);
+    }
+
+    return calendars;
+}
 
     private void parseEventsResponse(JSONObject response,
                                      RemoteCalendar calendar,
@@ -440,131 +520,191 @@ public class KerioApiClient {
         return events;
     }
 
-    // ------------------------------------------------------------------------
-    // JSON-RPC Call
-    // ------------------------------------------------------------------------
+    /**
+     * ✅ NEU: Event auf dem Server anlegen (Events.create)
+     *
+     * Wird vom SyncAdapter genutzt, um lokale neu erstellte Termine zum Server zu pushen.
+     *
+     * Request:
+     * params: { token, events: [ { folderId, summary, location, description, isAllDay, start, end } ] }
+     *
+     * Response (typisch):
+     * result: { errors: [...], result: [ { inputIndex, id, ... } ] }
+     */
+    public CreateResult createEvent(RemoteCalendar calendar, RemoteEvent event) throws IOException, JSONException {
+        ensureLoggedIn();
 
-    public synchronized JSONObject call(String method,
-                                        JSONObject params,
-                                        boolean expectResult) throws IOException, JSONException {
-
-        if (params == null) {
-            params = new JSONObject();
+        if (calendar == null || calendar.id == null || calendar.id.isEmpty()) {
+            throw new IllegalArgumentException("createEvent: calendar.id fehlt");
+        }
+        if (event == null) {
+            throw new IllegalArgumentException("createEvent: event ist null");
+        }
+        if (event.dtStartUtcMillis <= 0L) {
+            throw new IllegalArgumentException("createEvent: DTSTART fehlt/ungültig");
+        }
+        if (event.dtEndUtcMillis <= 0L) {
+            event.dtEndUtcMillis = event.dtStartUtcMillis + (30L * 60L * 1000L);
         }
 
-        long id = mRequestId.getAndIncrement();
+        JSONObject ev = new JSONObject();
+        ev.put("folderId", calendar.id);
+        ev.put("summary", event.summary != null ? event.summary : "");
+        ev.put("location", event.location != null ? event.location : "");
+        ev.put("description", event.description != null ? event.description : "");
+        ev.put("isAllDay", event.allDay);
 
-        JSONObject request = new JSONObject();
-        request.put("jsonrpc", JSON_RPC_VERSION);
-        request.put("id", id);
-        request.put("method", method);
-        request.put("params", params);
+        ev.put("start", buildKerioUtcString(event.dtStartUtcMillis));
+        ev.put("end", buildKerioUtcString(event.dtEndUtcMillis));
 
-        String requestBody = request.toString();
+        JSONArray events = new JSONArray();
+        events.put(ev);
 
-        HttpURLConnection conn = null;
-        String respBody;
+        JSONObject params = new JSONObject();
+        params.put("token", mToken);
+        params.put("events", events);
 
-        try {
-            URL url = new URL(mApiUrl);
-            conn = (HttpURLConnection) url.openConnection();
+        JSONObject response = call("Events.create", params, true);
 
-            if (conn instanceof HttpsURLConnection) {
-                HttpsURLConnection https = (HttpsURLConnection) conn;
-
-                if (mTrustAllCerts) {
-                    Log.w(TAG, "Verwende UNSICHEREN trust-all SSL-Context – nur für Tests geeignet!");
-                    SSLSocketFactory unsafeFactory = getUnsafeSslSocketFactory();
-                    HostnameVerifier unsafeVerifier = getUnsafeHostnameVerifier();
-                    https.setSSLSocketFactory(unsafeFactory);
-                    https.setHostnameVerifier(unsafeVerifier);
-                } else if (mCustomSslSocketFactory != null) {
-                    Log.d(TAG, "Verwende Custom-SSLSocketFactory für HTTPS-Verbindung.");
-                    https.setSSLSocketFactory(mCustomSslSocketFactory);
-                }
-            }
-
-            conn.setRequestMethod("POST");
-            conn.setDoInput(true);
-            conn.setDoOutput(true);
-            conn.setUseCaches(false);
-
-            conn.setRequestProperty("Accept", "application/json-rpc");
-            conn.setRequestProperty("Content-Type", "application/json-rpc; charset=UTF-8");
-
-            if (mToken != null) {
-                conn.setRequestProperty("X-Token", mToken);
-            }
-
-            String cookieHeader = buildCookieHeader();
-            if (!cookieHeader.isEmpty()) {
-                conn.setRequestProperty("Cookie", cookieHeader);
-            }
-
-            Log.d(TAG, "Sende JSON-RPC-Request: method=" + method + ", id=" + id);
-
-            BufferedWriter writer = new BufferedWriter(
-                    new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8));
-            writer.write(requestBody);
-            writer.flush();
-            writer.close();
-
-            int status = conn.getResponseCode();
-            Log.d(TAG, "HTTP-Status: " + status + " für Methode " + method);
-
-            InputStream is = (status >= 200 && status < 300)
-                    ? conn.getInputStream()
-                    : conn.getErrorStream();
-
-            respBody = readStreamToString(is);
-            if (respBody == null) {
-                respBody = "";
-            }
-
-            updateCookiesFromConnection(conn);
-
-            if (status < 200 || status >= 300) {
-                Log.e(TAG, "HTTP-Fehler beim JSON-RPC-Call: status=" + status +
-                        ", body=" + respBody);
-                throw new IOException("HTTP-Fehler " + status + " bei JSON-RPC-Call " + method);
-            }
-
-            JSONObject respJson = new JSONObject(respBody);
-
-            if (respJson.has("error")) {
-                JSONObject error = respJson.getJSONObject("error");
-                int code = error.optInt("code", 0);
-                String message = error.optString("message", "Unbekannter Fehler");
-                Log.e(TAG, "Kerio JSON-RPC-Error: code=" + code + ", message=" + message);
-                throw new IOException("Kerio JSON-RPC Error " + code + ": " + message);
-            }
-
-            if (expectResult && !respJson.has("result")) {
-                Log.w(TAG, "JSON-RPC-Antwort ohne result-Feld bei Methode " + method);
-            }
-
-            return respJson;
-
-        } catch (IOException e) {
-            Log.e(TAG, "IOException beim JSON-RPC-Call " + method + ": " + e.getMessage(), e);
-            throw e;
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
+        JSONObject resultObj = response.optJSONObject("result");
+        if (resultObj == null) {
+            throw new IOException("Events.create: result ist NULL. Response=" + response);
         }
+
+        JSONArray resArr = resultObj.optJSONArray("result");
+        if (resArr == null || resArr.length() == 0) {
+            throw new IOException("Events.create: result.result ist leer. Response=" + response);
+        }
+
+        JSONObject r0 = resArr.optJSONObject(0);
+        if (r0 == null) {
+            throw new IOException("Events.create: result[0] ist NULL. Response=" + response);
+        }
+
+        CreateResult cr = new CreateResult();
+        cr.inputIndex = r0.optInt("inputIndex", 0);
+        cr.id = r0.optString("id", null);
+
+        if (cr.id == null || cr.id.isEmpty()) {
+            throw new IOException("Events.create: id fehlt. Raw=" + response);
+        }
+
+        return cr;
     }
 
-    // ------------------------------------------------------------------------
-    // Hilfsfunktionen
-    // ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// JSON-RPC Call
+// ------------------------------------------------------------------------
+public synchronized JSONObject call(String method,
+                                    JSONObject params,
+                                    boolean expectResult) throws IOException, JSONException {
 
-    private void ensureLoggedIn() throws IOException, JSONException {
-        if (mToken == null) {
-            Log.d(TAG, "Noch kein Token vorhanden – führe Session.login() aus.");
-            login();
+    if (params == null) {
+        params = new JSONObject();
+    }
+
+    long id = mRequestId.getAndIncrement();
+
+    JSONObject request = new JSONObject();
+    request.put("jsonrpc", JSON_RPC_VERSION);
+    request.put("id", id);
+    request.put("method", method);
+    request.put("params", params);
+
+    String requestBody = request.toString();
+
+    HttpURLConnection conn = null;
+    String respBody;
+
+    try {
+        URL url = new URL(mApiUrl);
+        conn = (HttpURLConnection) url.openConnection();
+
+        if (conn instanceof HttpsURLConnection) {
+            HttpsURLConnection https = (HttpsURLConnection) conn;
+
+            if (mTrustAllCerts) {
+                Log.w(TAG, "Verwende UNSICHEREN trust-all SSL-Context – nur für Tests geeignet!");
+                SSLSocketFactory unsafeFactory = getUnsafeSslSocketFactory();
+                HostnameVerifier unsafeVerifier = getUnsafeHostnameVerifier();
+                https.setSSLSocketFactory(unsafeFactory);
+                https.setHostnameVerifier(unsafeVerifier);
+            } else if (mCustomSslSocketFactory != null) {
+                Log.d(TAG, "Verwende Custom-SSLSocketFactory für HTTPS-Verbindung.");
+                https.setSSLSocketFactory(mCustomSslSocketFactory);
+            }
+        }
+
+        conn.setRequestMethod("POST");
+        conn.setDoInput(true);
+        conn.setDoOutput(true);
+        conn.setUseCaches(false);
+
+        conn.setRequestProperty("Accept", "application/json-rpc");
+        conn.setRequestProperty("Content-Type", "application/json-rpc; charset=UTF-8");
+
+        if (mToken != null) {
+            conn.setRequestProperty("X-Token", mToken);
+        }
+
+        String cookieHeader = buildCookieHeader();
+        if (!cookieHeader.isEmpty()) {
+            conn.setRequestProperty("Cookie", cookieHeader);
+        }
+
+        Log.d(TAG, "Sende JSON-RPC-Request: method=" + method + ", id=" + id);
+
+        BufferedWriter writer = new BufferedWriter(
+                new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8));
+        writer.write(requestBody);
+        writer.flush();
+        writer.close();
+
+        int status = conn.getResponseCode();
+        Log.d(TAG, "HTTP-Status: " + status + " für Methode " + method);
+
+        InputStream is = (status >= 200 && status < 300)
+                ? conn.getInputStream()
+                : conn.getErrorStream();
+
+        respBody = readStreamToString(is);
+        if (respBody == null) {
+            respBody = "";
+        }
+
+        updateCookiesFromConnection(conn);
+
+        if (status < 200 || status >= 300) {
+            Log.e(TAG, "HTTP-Fehler beim JSON-RPC-Call: status=" + status +
+                    ", body=" + respBody);
+            throw new IOException("HTTP-Fehler " + status + " bei JSON-RPC-Call " + method);
+        }
+
+        JSONObject respJson = new JSONObject(respBody);
+
+        if (respJson.has("error")) {
+            JSONObject error = respJson.getJSONObject("error");
+            int code = error.optInt("code", 0);
+            String message = error.optString("message", "Unbekannter Fehler");
+            Log.e(TAG, "Kerio JSON-RPC-Error: code=" + code + ", message=" + message);
+            throw new IOException("Kerio JSON-RPC Error " + code + ": " + message);
+        }
+
+        if (expectResult && !respJson.has("result")) {
+            Log.w(TAG, "JSON-RPC-Antwort ohne result-Feld bei Methode " + method);
+        }
+
+        return respJson;
+
+    } catch (IOException e) {
+        Log.e(TAG, "IOException beim JSON-RPC-Call " + method + ": " + e.getMessage(), e);
+        throw e;
+    } finally {
+        if (conn != null) {
+            conn.disconnect();
         }
     }
+}
 
     private String readStreamToString(InputStream is) throws IOException {
         if (is == null) {
@@ -634,10 +774,6 @@ public class KerioApiClient {
         return sb.toString();
     }
 
-    // ------------------------------------------------------------------------
-    // trust-all SSL (nur für Tests!)
-    // ------------------------------------------------------------------------
-
     private static SSLSocketFactory getUnsafeSslSocketFactory() throws IOException {
         if (sUnsafeSslSocketFactory != null) {
             return sUnsafeSslSocketFactory;
@@ -647,12 +783,10 @@ public class KerioApiClient {
             TrustManager[] trustAllCerts = new TrustManager[]{
                     new X509TrustManager() {
                         @Override
-                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-                        }
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) { }
 
                         @Override
-                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-                        }
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) { }
 
                         @Override
                         public java.security.cert.X509Certificate[] getAcceptedIssuers() {
@@ -678,103 +812,35 @@ public class KerioApiClient {
         return sUnsafeHostnameVerifier;
     }
 
-    // ------------------------------------------------------------------------
-    // Modellklassen + Zeit-Helfer
-    // ------------------------------------------------------------------------
-
-    public static class RemoteCalendar {
-        public String id;
-        public String name;
-        public String owner;
-        public boolean readOnly;
-        public String color;
-
-        @Override
-        public String toString() {
-            return "RemoteCalendar{" +
-                    "id='" + id + '\'' +
-                    ", name='" + name + '\'' +
-                    ", owner='" + owner + '\'' +
-                    ", readOnly=" + readOnly +
-                    ", color='" + color + '\'' +
-                    '}';
-        }
-    }
-
-    public static class RemoteEvent {
-        public String uid;
-        public String eventId;
-        public String calendarId;
-        public String summary;
-        public String description;
-        public String location;
-        public long dtStartUtcMillis;
-        public long dtEndUtcMillis;
-        public boolean allDay;
-
-        public long lastModifiedUtcMillis;
-        public long lastModifiedUtc;
-
-        @Override
-        public String toString() {
-            return "RemoteEvent{" +
-                    "uid='" + uid + '\'' +
-                    ", eventId='" + eventId + '\'' +
-                    ", calendarId='" + calendarId + '\'' +
-                    ", summary='" + summary + '\'' +
-                    ", dtStartUtcMillis=" + dtStartUtcMillis +
-                    ", dtEndUtcMillis=" + dtEndUtcMillis +
-                    ", allDay=" + allDay +
-                    ", lastModifiedUtcMillis=" + lastModifiedUtcMillis +
-                    ", lastModifiedUtc=" + lastModifiedUtc +
-                    '}';
-        }
-    }
-
-    /**
-     * Kerio DateTime -> epochMillis
-     *
-     * Unterstützt:
-     * - 20251210T110355Z
-     * - 20251210T120000+0100
-     * - 20251210T120000+01:00
-     */
     private long parseKerioUtcDateTimeString(String kerioDateTime) {
         if (kerioDateTime == null || kerioDateTime.isEmpty()) {
             return 0L;
         }
 
-        // 1) UTC Z-Form
         try {
             LocalDateTime ldt = LocalDateTime.parse(kerioDateTime, KERIO_UTC_Z_FORMAT);
             return ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
         } catch (DateTimeParseException ignored) {
-            // weiter
         } catch (Exception e) {
             Log.w(TAG, "Konnte Kerio UTC(Z) nicht parsen: '" + kerioDateTime + "'", e);
         }
 
-        // 2) Offset ohne Doppelpunkt (+0100)
         try {
             OffsetDateTime odt = OffsetDateTime.parse(kerioDateTime, KERIO_OFFSET_NO_COLON_FORMAT);
             return odt.toInstant().toEpochMilli();
         } catch (DateTimeParseException ignored) {
-            // weiter
         } catch (Exception e) {
             Log.w(TAG, "Konnte Kerio Offset(+HHmm) nicht parsen: '" + kerioDateTime + "'", e);
         }
 
-        // 3) Offset mit Doppelpunkt (+01:00)
         try {
             OffsetDateTime odt = OffsetDateTime.parse(kerioDateTime, KERIO_OFFSET_COLON_FORMAT);
             return odt.toInstant().toEpochMilli();
         } catch (DateTimeParseException ignored) {
-            // weiter
         } catch (Exception e) {
             Log.w(TAG, "Konnte Kerio Offset(+HH:mm) nicht parsen: '" + kerioDateTime + "'", e);
         }
 
-        // 4) Letzter Fallback: ISO-8601
         try {
             return Instant.parse(kerioDateTime).toEpochMilli();
         } catch (Exception e) {
@@ -783,9 +849,6 @@ public class KerioApiClient {
         }
     }
 
-    /**
-     * Für Query-Parameter: wir senden UTC im Z-Format.
-     */
     private String buildKerioUtcString(long utcMillis) {
         Instant instant = Instant.ofEpochMilli(utcMillis);
         return KERIO_UTC_Z_FORMAT.withZone(ZoneOffset.UTC).format(instant);

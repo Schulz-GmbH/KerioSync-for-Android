@@ -47,6 +47,9 @@ import de.schulz.keriosync.net.KerioApiClient;
  * - Events pro Kalenderordner synchronisieren:
  *   - RemoteEvent.uid <-> Events._SYNC_ID
  *   - Inserts/Updates/Deletes
+ *
+ * Erweiterung:
+ * - Lokale neue Events (DIRTY=1, ohne SYNC_DATA2) als Events.create zum Server pushen
  */
 public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
@@ -89,6 +92,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             String username = account.name;
             String password = am.getPassword(account);
 
+            // ✅ FIX: richtige Konstanten aus deinem Projekt
             String trustAllStr = am.getUserData(account, KerioAccountConstants.KEY_SSL_TRUST_ALL);
             boolean trustAll = "1".equals(trustAllStr);
             String caUriStr = am.getUserData(account, KerioAccountConstants.KEY_SSL_CUSTOM_CA_URI);
@@ -143,8 +147,10 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     continue;
                 }
 
-                long since = 0L; // TODO: später inkrementellen Sync implementieren
+                // ✅ NEU: lokale neu erstellte Events pushen (Create)
+                pushLocalCreatedEvents(account, localCalId, rc, client, syncResult);
 
+                long since = 0L; // TODO: später inkrementellen Sync implementieren
                 List<KerioApiClient.RemoteEvent> remoteEvents =
                         client.fetchEvents(rc, since);
 
@@ -174,6 +180,150 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         } catch (Exception e) {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
+        }
+    }
+
+    /**
+     * Push: Lokale neu erstellte Events -> Kerio (Events.create)
+     *
+     * Kriterien:
+     * - Events.DIRTY = 1
+     * - Events.DELETED = 0
+     * - Events.SYNC_DATA2 ist leer/null (noch keine remote eventId)
+     *
+     * Nach erfolgreichem Push:
+     * - SYNC_DATA2 = remoteEventId
+     * - _SYNC_ID = remoteEventId@dtStart (gleiches Schema wie dein Pull)
+     * - DIRTY = 0
+     */
+    private void pushLocalCreatedEvents(Account account,
+                                        long localCalendarId,
+                                        KerioApiClient.RemoteCalendar remoteCalendar,
+                                        KerioApiClient client,
+                                        SyncResult syncResult) {
+
+        // readOnly-Kalender niemals pushen
+        if (remoteCalendar != null && remoteCalendar.readOnly) {
+            Log.i(TAG, "pushLocalCreatedEvents: RemoteCalendar '" + remoteCalendar.name + "' ist readOnly – Skip.");
+            return;
+        }
+
+        Uri eventsUri = CalendarContract.Events.CONTENT_URI;
+
+        String[] projection = new String[]{
+                CalendarContract.Events._ID,
+                CalendarContract.Events.DIRTY,
+                CalendarContract.Events.DELETED,
+                CalendarContract.Events.SYNC_DATA2,  // remote eventId (optional)
+                CalendarContract.Events._SYNC_ID,
+                CalendarContract.Events.DTSTART,
+                CalendarContract.Events.DTEND,
+                CalendarContract.Events.ALL_DAY,
+                CalendarContract.Events.TITLE,
+                CalendarContract.Events.DESCRIPTION,
+                CalendarContract.Events.EVENT_LOCATION
+        };
+
+        String selection =
+                CalendarContract.Events.CALENDAR_ID + "=? AND " +
+                        CalendarContract.Events.DIRTY + "=1 AND " +
+                        CalendarContract.Events.DELETED + "=0";
+
+        String[] selectionArgs = new String[]{String.valueOf(localCalendarId)};
+
+        Cursor c = null;
+        try {
+            c = mContentResolver.query(eventsUri, projection, selection, selectionArgs, null);
+            if (c == null) {
+                Log.w(TAG, "pushLocalCreatedEvents: Cursor ist NULL");
+                return;
+            }
+
+            while (c.moveToNext()) {
+                long localId = c.getLong(0);
+                int dirty = c.getInt(1);
+                int deleted = c.getInt(2);
+                String remoteEventId = c.getString(3);
+                String syncId = c.getString(4);
+
+                long dtStart = c.getLong(5);
+                long dtEnd = c.getLong(6);
+                boolean allDay = c.getInt(7) != 0;
+
+                String title = c.getString(8);
+                String description = c.getString(9);
+                String location = c.getString(10);
+
+                if (dirty == 0 || deleted != 0) {
+                    continue;
+                }
+
+                // Nur CREATE: remoteEventId fehlt
+                if (!TextUtils.isEmpty(remoteEventId)) {
+                    continue;
+                }
+
+                // Basic sanity
+                if (dtStart <= 0L) {
+                    Log.w(TAG, "pushLocalCreatedEvents: DTSTART fehlt, skip localId=" + localId);
+                    continue;
+                }
+                if (dtEnd <= 0L) {
+                    // fallback: 30 Minuten
+                    dtEnd = dtStart + (30L * 60L * 1000L);
+                }
+
+                KerioApiClient.RemoteEvent ev = new KerioApiClient.RemoteEvent();
+                ev.summary = title;
+                ev.description = description;
+                ev.location = location;
+                ev.allDay = allDay;
+                ev.dtStartUtcMillis = dtStart;
+                ev.dtEndUtcMillis = dtEnd;
+
+                try {
+                    KerioApiClient.CreateResult cr = client.createEvent(remoteCalendar, ev);
+                    if (cr == null || TextUtils.isEmpty(cr.id)) {
+                        Log.e(TAG, "Events.create lieferte keine ID zurück. localId=" + localId);
+                        syncResult.stats.numIoExceptions++;
+                        continue;
+                    }
+
+                    String newUid = cr.id + "@" + dtStart;
+
+                    ContentValues cv = new ContentValues();
+                    cv.put(CalendarContract.Events.SYNC_DATA2, cr.id);
+                    cv.put(CalendarContract.Events._SYNC_ID, newUid);
+                    cv.put(CalendarContract.Events.DIRTY, 0);
+
+                    Uri updUri = ContentUris.withAppendedId(eventsUri, localId);
+                    int rows = mContentResolver.update(
+                            updUri.buildUpon()
+                                    .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                                    .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
+                                    .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
+                                    .build(),
+                            cv,
+                            null,
+                            null
+                    );
+
+                    Log.i(TAG, "Event CREATE gepusht: localId=" + localId +
+                            ", remoteEventId=" + cr.id +
+                            ", newUid=" + newUid +
+                            ", rows=" + rows +
+                            ", oldSyncId=" + syncId);
+
+                    syncResult.stats.numInserts++;
+
+                } catch (Exception e) {
+                    Log.e(TAG, "pushLocalCreatedEvents: CREATE fehlgeschlagen für localId=" + localId, e);
+                    syncResult.stats.numIoExceptions++;
+                }
+            }
+
+        } finally {
+            if (c != null) c.close();
         }
     }
 
@@ -319,9 +469,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         return localByRemoteId;
     }
 
-    // ------------------------------------------------------------------------
-    // Event-Sync (lokale <-> Remote-Events)
-    // ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// Event-Sync (lokale <-> Remote-Events)
+// ------------------------------------------------------------------------
 
     private void syncEventsForCalendar(Account account,
                                        long localCalendarId,
