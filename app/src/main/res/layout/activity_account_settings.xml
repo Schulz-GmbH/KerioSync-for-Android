@@ -91,6 +91,61 @@
                 android:text="Zertifikat entfernen" />
         </LinearLayout>
 
+        <!-- Sync Einstellungen -->
+
+        <TextView
+            android:id="@+id/txtSyncHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Sync-Einstellungen"
+            android:textStyle="bold" />
+
+        <CheckBox
+            android:id="@+id/chkPeriodicSyncEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Automatisch synchronisieren (periodisch)" />
+
+        <TextView
+            android:id="@+id/txtPeriodicInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Hinweis: Android erlaubt bei SyncAdapter-Periodic effektiv min. 15 Minuten." />
+
+        <EditText
+            android:id="@+id/edtPeriodicMinutes"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Intervall (Minuten) – z.B. 15"
+            android:inputType="number" />
+
+        <CheckBox
+            android:id="@+id/chkInstantSyncEnabled"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Quasi sofort synchronisieren bei lokalen Änderungen (Sekunden)" />
+
+        <EditText
+            android:id="@+id/edtInstantUpdateDelaySeconds"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Update-Delay (Sek.) – z.B. 3"
+            android:inputType="number" />
+
+        <EditText
+            android:id="@+id/edtInstantMaxDelaySeconds"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Max-Delay (Sek.) – z.B. 10"
+            android:inputType="number" />
+
         <Button
             android:id="@+id/btnSave"
             android:layout_width="match_parent"

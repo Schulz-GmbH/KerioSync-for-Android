@@ -8,6 +8,7 @@ import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.SyncResult;
 import android.database.Cursor;
 import android.net.Uri;
@@ -85,6 +86,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 ", initialize=" + initialize +
                 ", extras=" + extras + ")");
 
+        // --------------------------------------------------------------------
+        // WICHTIG: Unterdrücke Change-Trigger, damit unsere eigenen Inserts/Updates
+        // nicht direkt den JobScheduler wieder triggern (Sync-Schleife).
+        // --------------------------------------------------------------------
+        suppressChangeTriggers("sync-start:" + account.name, 30);
+
         try {
             // 1. Account-Daten aus AccountManager lesen
             AccountManager am = AccountManager.get(mContext);
@@ -92,7 +99,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             String username = account.name;
             String password = am.getPassword(account);
 
-            // ✅ FIX: richtige Konstanten aus deinem Projekt
             String trustAllStr = am.getUserData(account, KerioAccountConstants.KEY_SSL_TRUST_ALL);
             boolean trustAll = "1".equals(trustAllStr);
             String caUriStr = am.getUserData(account, KerioAccountConstants.KEY_SSL_CUSTOM_CA_URI);
@@ -119,7 +125,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     Log.i(TAG, "Custom CA-SSLSocketFactory erfolgreich erstellt.");
                 } catch (Exception e) {
                     Log.e(TAG, "Fehler beim Laden des Custom-CA-Zertifikats: " + e.getMessage(), e);
-                    // Fallback: default Truststore nutzen
                     customSslFactory = null;
                 }
             }
@@ -147,7 +152,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     continue;
                 }
 
-                // ✅ NEU: lokale neu erstellte Events pushen (Create)
+                // ✅ lokale neu erstellte Events pushen (Create)
                 pushLocalCreatedEvents(account, localCalId, rc, client, syncResult);
 
                 long since = 0L; // TODO: später inkrementellen Sync implementieren
@@ -180,22 +185,16 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         } catch (Exception e) {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
+        } finally {
+            // Nachlauf: kurze Unterdrückung, da Provider Notifications manchmal "nachziehen"
+            suppressChangeTriggers("sync-end:" + account.name, 8);
         }
     }
 
-    /**
-     * Push: Lokale neu erstellte Events -> Kerio (Events.create)
-     *
-     * Kriterien:
-     * - Events.DIRTY = 1
-     * - Events.DELETED = 0
-     * - Events.SYNC_DATA2 ist leer/null (noch keine remote eventId)
-     *
-     * Nach erfolgreichem Push:
-     * - SYNC_DATA2 = remoteEventId
-     * - _SYNC_ID = remoteEventId@dtStart (gleiches Schema wie dein Pull)
-     * - DIRTY = 0
-     */
+    // ------------------------------------------------------------------------
+    // Push: Lokale neu erstellte Events -> Kerio (Events.create)
+    // ------------------------------------------------------------------------
+
     private void pushLocalCreatedEvents(Account account,
                                         long localCalendarId,
                                         KerioApiClient.RemoteCalendar remoteCalendar,
@@ -263,13 +262,11 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     continue;
                 }
 
-                // Basic sanity
                 if (dtStart <= 0L) {
                     Log.w(TAG, "pushLocalCreatedEvents: DTSTART fehlt, skip localId=" + localId);
                     continue;
                 }
                 if (dtEnd <= 0L) {
-                    // fallback: 30 Minuten
                     dtEnd = dtStart + (30L * 60L * 1000L);
                 }
 
@@ -350,23 +347,16 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         String[] projection = new String[]{
                 CalendarContract.Calendars._ID,
                 CalendarContract.Calendars._SYNC_ID,
-                CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
-                CalendarContract.Calendars.VISIBLE,
-                CalendarContract.Calendars.SYNC_EVENTS
+                CalendarContract.Calendars.CALENDAR_DISPLAY_NAME
         };
 
-        String selection = CalendarContract.Calendars.ACCOUNT_NAME + " = ? AND " +
-                CalendarContract.Calendars.ACCOUNT_TYPE + " = ?";
+        String selection = CalendarContract.Calendars.ACCOUNT_NAME + "=? AND " +
+                CalendarContract.Calendars.ACCOUNT_TYPE + "=?";
         String[] selectionArgs = new String[]{account.name, account.type};
 
-        Cursor cursor = mContentResolver.query(
-                calendarsUri,
-                projection,
-                selection,
-                selectionArgs,
-                null
-        );
+        Cursor cursor = mContentResolver.query(calendarsUri, projection, selection, selectionArgs, null);
 
+        Map<String, Long> remoteIdToLocalId = new HashMap<>();
         Map<Long, String> localCalendarRemoteId = new HashMap<>();
 
         if (cursor != null) {
@@ -374,19 +364,15 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 while (cursor.moveToNext()) {
                     long localId = cursor.getLong(0);
                     String syncId = cursor.getString(1);
-                    String displayName = cursor.getString(2);
-                    int visible = cursor.getInt(3);
-                    int syncEvents = cursor.getInt(4);
-
-                    Log.d(TAG, "Lokaler Kalender gefunden: id=" + localId +
-                            ", _SYNC_ID=" + syncId +
-                            ", name=" + displayName +
-                            ", visible=" + visible +
-                            ", syncEvents=" + syncEvents);
+                    String name = cursor.getString(2);
 
                     if (syncId != null && !syncId.isEmpty()) {
-                        localByRemoteId.put(syncId, localId);
+                        remoteIdToLocalId.put(syncId, localId);
                         localCalendarRemoteId.put(localId, syncId);
+
+                        Log.d(TAG, "Lokaler Kalender gefunden: id=" + localId +
+                                ", _SYNC_ID=" + syncId +
+                                ", name=" + name);
                     }
                 }
             } finally {
@@ -401,12 +387,11 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 .build();
 
         for (KerioApiClient.RemoteCalendar rc : remoteCalendars) {
-            if (rc.id == null) {
-                Log.w(TAG, "RemoteCalendar ohne ID – wird ignoriert: " + rc);
+            if (rc.id == null || rc.id.isEmpty()) {
                 continue;
             }
 
-            Long localId = localByRemoteId.get(rc.id);
+            Long localId = remoteIdToLocalId.get(rc.id);
 
             ContentValues values = new ContentValues();
             values.put(CalendarContract.Calendars.ACCOUNT_NAME, account.name);
@@ -440,6 +425,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             } else {
                 Uri updateUri = ContentUris.withAppendedId(syncCalendarsUri, localId);
                 int rows = mContentResolver.update(updateUri, values, null, null);
+                localByRemoteId.put(rc.id, localId);
                 Log.i(TAG, "Lokaler Kalender aktualisiert: remoteId=" + rc.id +
                         ", localId=" + localId + ", rows=" + rows);
                 syncResult.stats.numUpdates += rows;
@@ -469,9 +455,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         return localByRemoteId;
     }
 
-// ------------------------------------------------------------------------
-// Event-Sync (lokale <-> Remote-Events)
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
+    // Event-Sync (lokale <-> Remote-Events)
+    // ------------------------------------------------------------------------
 
     private void syncEventsForCalendar(Account account,
                                        long localCalendarId,
@@ -705,6 +691,27 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         @Override
         public java.security.cert.X509Certificate[] getAcceptedIssuers() {
             return mDelegate.getAcceptedIssuers();
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Trigger-Unterdrückung (Prefs)
+    // ------------------------------------------------------------------------
+
+    private void suppressChangeTriggers(String reason, int seconds) {
+        try {
+            long now = System.currentTimeMillis();
+            long until = now + (Math.max(0, seconds) * 1000L);
+
+            SharedPreferences prefs = mContext.getSharedPreferences(KerioAccountConstants.PREFS_NAME, Context.MODE_PRIVATE);
+            prefs.edit()
+                    .putLong(KerioAccountConstants.PREF_SUPPRESS_CHANGE_TRIGGERS_UNTIL_MS, until)
+                    .putString(KerioAccountConstants.PREF_SUPPRESS_REASON, reason)
+                    .apply();
+
+            Log.i(TAG, "Change-Trigger unterdrückt: until=" + until + " (" + seconds + "s), reason=" + reason);
+        } catch (Exception e) {
+            Log.w(TAG, "suppressChangeTriggers() Fehler: " + e.getMessage(), e);
         }
     }
 }

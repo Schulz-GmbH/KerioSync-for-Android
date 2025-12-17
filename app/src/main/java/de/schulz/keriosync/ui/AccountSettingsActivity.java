@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat;
 
 import de.schulz.keriosync.R;
 import de.schulz.keriosync.auth.KerioAccountConstants;
+import de.schulz.keriosync.sync.KerioSyncScheduler;
 
 /**
  * Activity, in der der Benutzer die Kerio-Account-Daten eingibt
@@ -55,6 +56,13 @@ public class AccountSettingsActivity extends AppCompatActivity {
     private Button btnClearCustomCa;
     private Button btnSave;
 
+    // Sync Settings (neu)
+    private CheckBox chkPeriodicSyncEnabled;
+    private EditText edtPeriodicMinutes;
+    private CheckBox chkInstantSyncEnabled;
+    private EditText edtInstantUpdateDelaySeconds;
+    private EditText edtInstantMaxDelaySeconds;
+
     private AccountAuthenticatorResponse mAccountAuthenticatorResponse;
     private boolean mIsNewAccount = true;
     private Account mExistingAccount = null;
@@ -74,6 +82,12 @@ public class AccountSettingsActivity extends AppCompatActivity {
         btnPickCustomCa = findViewById(R.id.btnPickCustomCa);
         btnClearCustomCa = findViewById(R.id.btnClearCustomCa);
         btnSave = findViewById(R.id.btnSave);
+
+        chkPeriodicSyncEnabled = findViewById(R.id.chkPeriodicSyncEnabled);
+        edtPeriodicMinutes = findViewById(R.id.edtPeriodicMinutes);
+        chkInstantSyncEnabled = findViewById(R.id.chkInstantSyncEnabled);
+        edtInstantUpdateDelaySeconds = findViewById(R.id.edtInstantUpdateDelaySeconds);
+        edtInstantMaxDelaySeconds = findViewById(R.id.edtInstantMaxDelaySeconds);
 
         // *** WICHTIG: Runtime-Permissions sicherstellen ***
         ensureRequiredPermissions();
@@ -129,8 +143,19 @@ public class AccountSettingsActivity extends AppCompatActivity {
                     if (!TextUtils.isEmpty(caUriStr)) {
                         mSelectedCaUri = Uri.parse(caUriStr);
                     }
+
+                    // Sync Settings laden
+                    loadSyncSettings(am2, mExistingAccount);
+                } else {
+                    // Default Sync Settings für neuen Account
+                    setDefaultSyncSettings();
                 }
+            } else {
+                // Default Sync Settings für neuen Account
+                setDefaultSyncSettings();
             }
+        } else {
+            setDefaultSyncSettings();
         }
 
         updateCaInfoText(mSelectedCaUri);
@@ -147,107 +172,43 @@ public class AccountSettingsActivity extends AppCompatActivity {
         btnSave.setOnClickListener(v -> saveAccount());
     }
 
-    // ------------------------------------------------------------------------
-    // Runtime-Permissions
-    // ------------------------------------------------------------------------
+    private void setDefaultSyncSettings() {
+        chkPeriodicSyncEnabled.setChecked(KerioSyncScheduler.DEFAULT_PERIODIC_ENABLED);
+        edtPeriodicMinutes.setText(String.valueOf(KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES));
 
-    /**
-     * Stellt sicher, dass die App die benötigten Berechtigungen
-     * READ_CALENDAR, WRITE_CALENDAR und GET_ACCOUNTS zur Laufzeit hat.
-     *
-     * Ab Android 6+ müssen diese explizit vom Nutzer bestätigt werden.
-     */
-    private void ensureRequiredPermissions() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            // Unter Android < 6 sind zur Laufzeit keine Permissions nötig.
-            return;
-        }
-
-        boolean hasReadCalendar = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED;
-        boolean hasWriteCalendar = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED;
-        boolean hasGetAccounts = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
-
-        if (hasReadCalendar && hasWriteCalendar && hasGetAccounts) {
-            Log.d(TAG, "Alle erforderlichen Berechtigungen bereits vorhanden.");
-            return;
-        }
-
-        // Berechtigungen anfragen
-        Log.d(TAG, "Fordere erforderliche Berechtigungen an (READ/WRITE_CALENDAR, GET_ACCOUNTS).");
-        ActivityCompat.requestPermissions(
-                this,
-                new String[]{
-                        Manifest.permission.READ_CALENDAR,
-                        Manifest.permission.WRITE_CALENDAR,
-                        Manifest.permission.GET_ACCOUNTS
-                },
-                REQ_PERMISSIONS_CALENDAR
-        );
+        chkInstantSyncEnabled.setChecked(KerioSyncScheduler.DEFAULT_INSTANT_ENABLED);
+        edtInstantUpdateDelaySeconds.setText(String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS));
+        edtInstantMaxDelaySeconds.setText(String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS));
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    private void loadSyncSettings(AccountManager am, Account account) {
+        String periodicEnabled = am.getUserData(account, KerioAccountConstants.KEY_PERIODIC_SYNC_ENABLED);
+        String intervalMin = am.getUserData(account, KerioAccountConstants.KEY_SYNC_INTERVAL_MINUTES);
 
-        if (requestCode == REQ_PERMISSIONS_CALENDAR) {
-            boolean allGranted = true;
-            if (grantResults.length == 0) {
-                allGranted = false;
-            } else {
-                for (int result : grantResults) {
-                    if (result != PackageManager.PERMISSION_GRANTED) {
-                        allGranted = false;
-                        break;
-                    }
-                }
-            }
+        String instantEnabled = am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_ENABLED);
+        String updateDelay = am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_UPDATE_DELAY_SECONDS);
+        String maxDelay = am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_MAX_DELAY_SECONDS);
 
-            if (allGranted) {
-                Log.d(TAG, "Alle angeforderten Berechtigungen wurden gewährt.");
-                Toast.makeText(
-                        this,
-                        "Kalender- und Konto-Berechtigungen wurden erteilt. Sync kann jetzt korrekt laufen.",
-                        Toast.LENGTH_LONG
-                ).show();
-            } else {
-                Log.w(TAG, "Mindestens eine benötigte Berechtigung wurde verweigert.");
-                Toast.makeText(
-                        this,
-                        "Ohne Kalender-Berechtigungen kann KerioSync keine Termine synchronisieren.",
-                        Toast.LENGTH_LONG
-                ).show();
-            }
-        }
+        chkPeriodicSyncEnabled.setChecked(!"0".equals(periodicEnabled));
+        edtPeriodicMinutes.setText(TextUtils.isEmpty(intervalMin) ? String.valueOf(KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES) : intervalMin);
+
+        chkInstantSyncEnabled.setChecked(!"0".equals(instantEnabled));
+        edtInstantUpdateDelaySeconds.setText(TextUtils.isEmpty(updateDelay) ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS) : updateDelay);
+        edtInstantMaxDelaySeconds.setText(TextUtils.isEmpty(maxDelay) ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS) : maxDelay);
     }
 
-    // ------------------------------------------------------------------------
-    // SSL / Zertifikats-UI
-    // ------------------------------------------------------------------------
-
-    private void updateCaControlsEnabled() {
-        boolean trustAll = chkTrustAllCerts.isChecked();
-        // Wenn „trust all“ aktiv ist, Custom-CA-Steuerung deaktivieren
-        btnPickCustomCa.setEnabled(!trustAll);
-        btnClearCustomCa.setEnabled(!trustAll);
-    }
-
-    private void updateCaInfoText(@Nullable Uri uri) {
-        if (uri == null) {
-            txtCustomCaInfo.setText("Kein eigenes Zertifikat ausgewählt. Es wird der System-Zertifikatsspeicher verwendet.");
-        } else {
-            txtCustomCaInfo.setText("Eigenes Zertifikat ausgewählt:\n" + uri.toString());
+    private int parseIntOrDefault(String val, int def) {
+        try {
+            if (val == null) return def;
+            return Integer.parseInt(val.trim());
+        } catch (Exception ignored) {
+            return def;
         }
     }
 
     private void openCaPicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        // Zertifikate können verschieden MIME-Typen haben – wir erlauben mehrere
         intent.setType("*/*");
         String[] mimeTypes = new String[]{
                 "application/x-x509-ca-cert",
@@ -269,7 +230,6 @@ public class AccountSettingsActivity extends AppCompatActivity {
         if (requestCode == REQ_PICK_CA_CERT && resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                // Persistente Leseberechtigung sichern
                 try {
                     final int takeFlags = data.getFlags()
                             & (Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -325,6 +285,19 @@ public class AccountSettingsActivity extends AppCompatActivity {
             return;
         }
 
+        // Sync Settings sammeln
+        boolean periodicEnabled = chkPeriodicSyncEnabled.isChecked();
+        int periodicMinutes = parseIntOrDefault(edtPeriodicMinutes.getText().toString(), KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES);
+        if (periodicMinutes < KerioSyncScheduler.MIN_PERIODIC_MINUTES) {
+            periodicMinutes = KerioSyncScheduler.MIN_PERIODIC_MINUTES;
+        }
+
+        boolean instantEnabled = chkInstantSyncEnabled.isChecked();
+        int instantUpdateDelaySec = parseIntOrDefault(edtInstantUpdateDelaySeconds.getText().toString(), KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS);
+        int instantMaxDelaySec = parseIntOrDefault(edtInstantMaxDelaySeconds.getText().toString(), KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS);
+        if (instantUpdateDelaySec < 1) instantUpdateDelaySec = 1;
+        if (instantMaxDelaySec < instantUpdateDelaySec) instantMaxDelaySec = instantUpdateDelaySec;
+
         AccountManager accountManager = AccountManager.get(this);
         logExistingKerioAccounts(accountManager, "vor saveAccount()");
 
@@ -338,6 +311,13 @@ public class AccountSettingsActivity extends AppCompatActivity {
             if (caUriStr != null) {
                 userData.putString(KerioAccountConstants.KEY_SSL_CUSTOM_CA_URI, caUriStr);
             }
+
+            // Sync Settings speichern
+            userData.putString(KerioAccountConstants.KEY_PERIODIC_SYNC_ENABLED, periodicEnabled ? "1" : "0");
+            userData.putString(KerioAccountConstants.KEY_SYNC_INTERVAL_MINUTES, String.valueOf(periodicMinutes));
+            userData.putString(KerioAccountConstants.KEY_INSTANT_SYNC_ENABLED, instantEnabled ? "1" : "0");
+            userData.putString(KerioAccountConstants.KEY_INSTANT_SYNC_UPDATE_DELAY_SECONDS, String.valueOf(instantUpdateDelaySec));
+            userData.putString(KerioAccountConstants.KEY_INSTANT_SYNC_MAX_DELAY_SECONDS, String.valueOf(instantMaxDelaySec));
 
             boolean created = accountManager.addAccountExplicitly(account, password, userData);
             if (!created) {
@@ -369,8 +349,18 @@ public class AccountSettingsActivity extends AppCompatActivity {
                 accountManager.setUserData(account, KerioAccountConstants.KEY_SSL_CUSTOM_CA_URI, null);
             }
 
+            // Sync Settings speichern
+            accountManager.setUserData(account, KerioAccountConstants.KEY_PERIODIC_SYNC_ENABLED, periodicEnabled ? "1" : "0");
+            accountManager.setUserData(account, KerioAccountConstants.KEY_SYNC_INTERVAL_MINUTES, String.valueOf(periodicMinutes));
+            accountManager.setUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_ENABLED, instantEnabled ? "1" : "0");
+            accountManager.setUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_UPDATE_DELAY_SECONDS, String.valueOf(instantUpdateDelaySec));
+            accountManager.setUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_MAX_DELAY_SECONDS, String.valueOf(instantMaxDelaySec));
+
             Log.d(TAG, "Bestehender Kerio-Account aktualisiert: " + account.name);
         }
+
+        // Scheduler anwenden (DAS ist der entscheidende Teil)
+        KerioSyncScheduler.applyAll(this, account);
 
         logExistingKerioAccounts(accountManager, "nach saveAccount()");
 
@@ -390,5 +380,97 @@ public class AccountSettingsActivity extends AppCompatActivity {
 
         setResult(RESULT_OK);
         finish();
+    }
+
+    // ------------------------------------------------------------------------
+    // Runtime-Permissions
+    // ------------------------------------------------------------------------
+
+    /**
+     * Stellt sicher, dass die App die benötigten Berechtigungen
+     * READ_CALENDAR, WRITE_CALENDAR und GET_ACCOUNTS zur Laufzeit hat.
+     */
+    private void ensureRequiredPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return;
+        }
+
+        boolean hasReadCalendar = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED;
+        boolean hasWriteCalendar = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED;
+        boolean hasGetAccounts = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
+
+        if (hasReadCalendar && hasWriteCalendar && hasGetAccounts) {
+            Log.d(TAG, "Alle erforderlichen Berechtigungen bereits vorhanden.");
+            return;
+        }
+
+        Log.d(TAG, "Fordere erforderliche Berechtigungen an (READ/WRITE_CALENDAR, GET_ACCOUNTS).");
+        ActivityCompat.requestPermissions(
+                this,
+                new String[]{
+                        Manifest.permission.READ_CALENDAR,
+                        Manifest.permission.WRITE_CALENDAR,
+                        Manifest.permission.GET_ACCOUNTS
+                },
+                REQ_PERMISSIONS_CALENDAR
+        );
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == REQ_PERMISSIONS_CALENDAR) {
+            boolean allGranted = true;
+            if (grantResults.length == 0) {
+                allGranted = false;
+            } else {
+                for (int result : grantResults) {
+                    if (result != PackageManager.PERMISSION_GRANTED) {
+                        allGranted = false;
+                        break;
+                    }
+                }
+            }
+
+            if (allGranted) {
+                Log.d(TAG, "Alle angeforderten Berechtigungen wurden gewährt.");
+                Toast.makeText(
+                        this,
+                        "Kalender- und Konto-Berechtigungen wurden erteilt. Sync kann jetzt korrekt laufen.",
+                        Toast.LENGTH_LONG
+                ).show();
+            } else {
+                Log.w(TAG, "Mindestens eine benötigte Berechtigung wurde verweigert.");
+                Toast.makeText(
+                        this,
+                        "Ohne Kalender-Berechtigungen kann KerioSync keine Termine synchronisieren.",
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // SSL / Zertifikats-UI
+    // ------------------------------------------------------------------------
+
+    private void updateCaControlsEnabled() {
+        boolean trustAll = chkTrustAllCerts.isChecked();
+        btnPickCustomCa.setEnabled(!trustAll);
+        btnClearCustomCa.setEnabled(!trustAll);
+    }
+
+    private void updateCaInfoText(@Nullable Uri uri) {
+        if (uri == null) {
+            txtCustomCaInfo.setText("Kein eigenes Zertifikat ausgewählt. Es wird der System-Zertifikatsspeicher verwendet.");
+        } else {
+            txtCustomCaInfo.setText("Eigenes Zertifikat ausgewählt:\n" + uri.toString());
+        }
     }
 }
