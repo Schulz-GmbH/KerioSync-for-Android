@@ -48,6 +48,10 @@ import javax.net.ssl.X509TrustManager;
  *
  * Erweiterung:
  * - Events.create (Events Push: lokale neu erstellte Termine zum Server)
+ *
+ * Fix/Erweiterung:
+ * - Occurrences.getById Parsing korrigiert
+ * - Helper zum Resolven einer Occurrence-ID für neu erstellte Events (Events.create liefert i.d.R. Event-ID)
  */
 public class KerioApiClient {
 
@@ -70,8 +74,6 @@ public class KerioApiClient {
      * - UTC: 20251210T110355Z
      * - Offset: 20251210T120000+0100
      * - ggf.: 20251210T120000+01:00
-     *
-     * Kerio-Doku nennt UtcDateTime als string, in der Praxis kommt häufig Offset.
      */
     private static final DateTimeFormatter KERIO_UTC_Z_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'",
             Locale.US);
@@ -112,10 +114,10 @@ public class KerioApiClient {
     }
 
     public KerioApiClient(String apiUrl,
-            String username,
-            String password,
-            boolean trustAllCerts,
-            SSLSocketFactory customSslSocketFactory) {
+                          String username,
+                          String password,
+                          boolean trustAllCerts,
+                          SSLSocketFactory customSslSocketFactory) {
 
         String normalized = normalizeKerioApiUrl(apiUrl);
         Log.d(TAG, "KerioApiClient: Original-URL='" + apiUrl + "', normalisierte API-URL='" + normalized + "'");
@@ -230,8 +232,8 @@ public class KerioApiClient {
     }
 
     public static class RemoteEvent {
-        public String uid;
-        public String eventId;
+        public String uid;        // Occurrence-ID (id aus Occurrences.get)
+        public String eventId;    // Event-ID (eventId aus Occurrences.get)
         public String calendarId;
 
         public String summary;
@@ -266,7 +268,7 @@ public class KerioApiClient {
      */
     public static class CreateResult {
         public int inputIndex;
-        public String id;
+        public String id; // meist Event-ID
 
         @Override
         public String toString() {
@@ -346,8 +348,8 @@ public class KerioApiClient {
     }
 
     private void parseEventsResponse(JSONObject response,
-            RemoteCalendar calendar,
-            List<RemoteEvent> out)
+                                     RemoteCalendar calendar,
+                                     List<RemoteEvent> out)
             throws JSONException {
 
         if (response == null) {
@@ -379,8 +381,12 @@ public class KerioApiClient {
 
             RemoteEvent evt = new RemoteEvent();
 
+            // ✅ Kerio Occurrence-ID (wichtig für Update/Delete)
             evt.uid = occ.optString("id", null);
+
+            // Event-ID (für Zuordnung/Debug/Resolve)
             evt.eventId = occ.optString("eventId", null);
+
             evt.calendarId = calendar.id;
 
             evt.summary = occ.optString("summary", "");
@@ -413,6 +419,7 @@ public class KerioApiClient {
             }
 
             if (evt.uid == null || evt.uid.isEmpty()) {
+                // Fallback – sollte in der Praxis aber nicht nötig sein
                 if (evt.eventId != null && evt.dtStartUtcMillis > 0) {
                     evt.uid = evt.eventId + "@" + evt.dtStartUtcMillis;
                 }
@@ -453,9 +460,9 @@ public class KerioApiClient {
      * - Condition 'end' nur mit 'LessThan'
      */
     public List<RemoteEvent> fetchEvents(String token,
-            RemoteCalendar calendar,
-            long startUtcMillis,
-            long endUtcMillis)
+                                         RemoteCalendar calendar,
+                                         long startUtcMillis,
+                                         long endUtcMillis)
             throws IOException, JSONException {
 
         List<RemoteEvent> events = new ArrayList<>();
@@ -521,17 +528,10 @@ public class KerioApiClient {
     }
 
     /**
-     * ✅ NEU: Event auf dem Server anlegen (Events.create)
+     * ✅ Event auf dem Server anlegen (Events.create)
      *
-     * Wird vom SyncAdapter genutzt, um lokale neu erstellte Termine zum Server zu
-     * pushen.
-     *
-     * Request:
-     * params: { token, events: [ { folderId, summary, location, description,
-     * isAllDay, start, end } ] }
-     *
-     * Response (typisch):
-     * result: { errors: [...], result: [ { inputIndex, id, ... } ] }
+     * Events.create liefert in der Praxis oft eine Event-ID zurück.
+     * Für Update/Delete brauchst du aber die Occurrence-ID (Occurrences.*).
      */
     public CreateResult createEvent(RemoteCalendar calendar, RemoteEvent event) throws IOException, JSONException {
         ensureLoggedIn();
@@ -596,22 +596,15 @@ public class KerioApiClient {
 
     // ---------------------------------------------------------------------
     // Update/Delete: Lokale Änderungen an bestehenden Terminen -> Kerio
-    // - Kerio Connect Client API: Occurrences.set / Occurrences.remove
-    // - Wir arbeiten primär auf Occurrence-Ebene (nicht Event-Ebene), da
-    // Android CalendarContract einzelne Vorkommen als einzelne Rows abbilden kann.
     // ---------------------------------------------------------------------
 
     /**
-     * Formatiert einen Unix-Timestamp (Millis) als Kerio-UtcDateTime im
-     * UTC-Z-Format
+     * Formatiert einen Unix-Timestamp (Millis) als Kerio-UtcDateTime im UTC-Z-Format
      * (yyyyMMdd'T'HHmmss'Z').
-     *
-     * @param millis Epoch-Millis
-     * @return Kerio-UtcDateTime String
      */
     public static String formatKerioUtcDateTime(long millis) {
-        java.time.Instant instant = java.time.Instant.ofEpochMilli(millis);
-        java.time.OffsetDateTime odt = java.time.OffsetDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
+        Instant instant = Instant.ofEpochMilli(millis);
+        OffsetDateTime odt = OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
         return odt.format(KERIO_UTC_Z_FORMAT);
     }
 
@@ -620,14 +613,12 @@ public class KerioApiClient {
      *
      * Kerio-API: Occurrences.remove(errors, occurrences)
      * Laut IDL sind nur 'id' und 'modification' erforderlich.
-     *
-     * @param occurrenceId Kerio Occurrence-ID (z.B. keriostorage://occurrence/...)
      */
     public void deleteOccurrence(String occurrenceId) throws IOException {
-        try{
+        try {
             ensureLoggedIn();
         } catch (JSONException e) {
-            throw new RuntimeException(e);
+            throw new IOException("deleteOccurrence: login/JSON Fehler: " + e.getMessage(), e);
         }
 
         if (occurrenceId == null || occurrenceId.trim().isEmpty()) {
@@ -659,16 +650,12 @@ public class KerioApiClient {
      * 1) Occurrence per getById holen (damit wir ein vollständiges Objekt haben),
      * 2) relevante Felder überschreiben,
      * 3) per Occurrences.set zurückschreiben.
-     *
-     * @param occurrenceId Kerio Occurrence-ID (keriostorage://occurrence/...)
-     * @param updated      Werte aus Android (Summary, Location, Description,
-     *                     Start/End, AllDay)
      */
     public void updateOccurrence(String occurrenceId, RemoteEvent updated) throws IOException {
-        try{
+        try {
             ensureLoggedIn();
         } catch (JSONException e) {
-            throw new RuntimeException(e);
+            throw new IOException("updateOccurrence: login/JSON Fehler: " + e.getMessage(), e);
         }
 
         if (occurrenceId == null || occurrenceId.trim().isEmpty()) {
@@ -680,7 +667,7 @@ public class KerioApiClient {
 
         JSONObject existing = fetchOccurrenceById(occurrenceId);
         if (existing == null) {
-            throw new IOException("updateOccurrence: Occurrence nicht gefunden: " + occurrenceId);
+            throw new IOException("updateOccurrence: Occurrence nicht gefunden (getById lieferte null): " + occurrenceId);
         }
 
         try {
@@ -689,10 +676,12 @@ public class KerioApiClient {
             existing.put("description", nullToEmpty(updated.description));
             existing.put("isAllDay", updated.allDay);
 
-            if (updated.dtStartUtcMillis > 0)
+            if (updated.dtStartUtcMillis > 0) {
                 existing.put("start", formatKerioUtcDateTime(updated.dtStartUtcMillis));
-            if (updated.dtEndUtcMillis > 0)
+            }
+            if (updated.dtEndUtcMillis > 0) {
                 existing.put("end", formatKerioUtcDateTime(updated.dtEndUtcMillis));
+            }
 
             existing.put("modification", "modifyThis");
 
@@ -714,7 +703,10 @@ public class KerioApiClient {
     }
 
     /**
-     * Lädt eine Occurrence als JSONObject über Occurrences.getById.
+     * ✅ FIX: Lädt eine Occurrence als JSONObject über Occurrences.getById.
+     *
+     * Vorher war hier der zentrale Bug: du hast resp.optJSONArray("result") genutzt,
+     * aber Kerio liefert i.d.R. ein result-Objekt (JSONObject) zurück.
      */
     private JSONObject fetchOccurrenceById(String occurrenceId) throws IOException {
         try {
@@ -727,31 +719,154 @@ public class KerioApiClient {
 
             JSONObject resp = call("Occurrences.getById", params, true);
 
-            // Je nach Wrapper können die Daten unter unterschiedlichen Keys liegen.
-            JSONArray result = resp.optJSONArray("result");
-            if (result == null)
-                result = resp.optJSONArray("occurrences");
-            if (result == null)
-                result = resp.optJSONArray("list");
+            // Kerio JSON-RPC: { "result": { "occurrences": [ ... ] } } (typisch)
+            JSONObject resultObj = resp.optJSONObject("result");
+            if (resultObj != null) {
+                JSONArray occArr = resultObj.optJSONArray("occurrences");
+                if (occArr == null) occArr = resultObj.optJSONArray("list");
+                if (occArr == null) occArr = resultObj.optJSONArray("result");
 
-            if (result != null && result.length() > 0) {
-                return result.getJSONObject(0);
+                if (occArr != null && occArr.length() > 0) {
+                    return occArr.getJSONObject(0);
+                }
             }
+
+            // Fallbacks (falls Server/Wrapper anders antwortet)
+            JSONArray directArr = resp.optJSONArray("result");
+            if (directArr != null && directArr.length() > 0) {
+                return directArr.getJSONObject(0);
+            }
+            directArr = resp.optJSONArray("occurrences");
+            if (directArr != null && directArr.length() > 0) {
+                return directArr.getJSONObject(0);
+            }
+            directArr = resp.optJSONArray("list");
+            if (directArr != null && directArr.length() > 0) {
+                return directArr.getJSONObject(0);
+            }
+
             return null;
+
         } catch (JSONException e) {
             throw new IOException("fetchOccurrenceById: JSON Fehler: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * ✅ Helper: Für ein neu erstelltes Event (Events.create -> eventId) die passende Occurrence-ID ermitteln.
+     *
+     * Idee:
+     * - Occurrences.get im Zeitfenster um dtStart herum
+     * - Filter: eventId == <eventId>
+     *
+     * @param calendarFolderId Kerio folderId (calendar.id)
+     * @param eventId Kerio eventId (von Events.create)
+     * @param dtStartUtcMillis Startzeit (Millis)
+     * @return occurrenceId oder null
+     */
+    public String resolveOccurrenceIdForEvent(String calendarFolderId, String eventId, long dtStartUtcMillis)
+            throws IOException, JSONException {
+
+        ensureLoggedIn();
+
+        if (calendarFolderId == null || calendarFolderId.trim().isEmpty()) return null;
+        if (eventId == null || eventId.trim().isEmpty()) return null;
+        if (dtStartUtcMillis <= 0L) return null;
+
+        // Zeitfenster: +/- 6 Stunden um DTSTART (robust gegen TZ/Server-Normalisierung)
+        long startWindow = dtStartUtcMillis - (6L * 60L * 60L * 1000L);
+        long endWindow = dtStartUtcMillis + (6L * 60L * 60L * 1000L);
+
+        String windowStartStr = buildKerioUtcString(startWindow);
+        String windowEndStr = buildKerioUtcString(endWindow + 1000L);
+
+        JSONObject query = new JSONObject();
+
+        JSONArray fields = new JSONArray();
+        fields.put("id");
+        fields.put("eventId");
+        fields.put("start");
+        fields.put("end");
+        query.put("fields", fields);
+
+        JSONArray conditions = new JSONArray();
+
+        // eventId == <eventId>
+        JSONObject condEventId = new JSONObject();
+        condEventId.put("fieldName", "eventId");
+        condEventId.put("comparator", "Equal");
+        condEventId.put("value", eventId);
+        conditions.put(condEventId);
+
+        // start >= windowStart
+        JSONObject condStartGe = new JSONObject();
+        condStartGe.put("fieldName", "start");
+        condStartGe.put("comparator", "GreaterEq");
+        condStartGe.put("value", windowStartStr);
+        conditions.put(condStartGe);
+
+        // end < windowEnd (Kerio-Constraint)
+        JSONObject condEndLt = new JSONObject();
+        condEndLt.put("fieldName", "end");
+        condEndLt.put("comparator", "LessThan");
+        condEndLt.put("value", windowEndStr);
+        conditions.put(condEndLt);
+
+        query.put("conditions", conditions);
+        query.put("combining", "And");
+        query.put("start", 0);
+        query.put("limit", 50);
+
+        JSONObject params = new JSONObject();
+        params.put("token", mToken);
+        params.put("folderIds", new JSONArray().put(calendarFolderId));
+        params.put("query", query);
+
+        JSONObject resp = call("Occurrences.get", params, true);
+
+        JSONObject resultObj = resp.optJSONObject("result");
+        if (resultObj == null) return null;
+
+        JSONArray list = resultObj.optJSONArray("list");
+        if (list == null) list = resultObj.optJSONArray("occurrences");
+        if (list == null) return null;
+
+        // Best match: occurrence mit start am nächsten an dtStartUtcMillis
+        String bestId = null;
+        long bestDelta = Long.MAX_VALUE;
+
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject occ = list.optJSONObject(i);
+            if (occ == null) continue;
+
+            String occId = occ.optString("id", null);
+            String occEventId = occ.optString("eventId", null);
+            String startStr = occ.optString("start", null);
+
+            if (occId == null || occId.isEmpty()) continue;
+            if (!eventId.equals(occEventId)) continue;
+
+            long startMillis = 0L;
+            if (startStr != null && !startStr.isEmpty()) {
+                startMillis = parseKerioUtcDateTimeString(startStr);
+            }
+            if (startMillis <= 0L) continue;
+
+            long delta = Math.abs(startMillis - dtStartUtcMillis);
+            if (delta < bestDelta) {
+                bestDelta = delta;
+                bestId = occId;
+            }
+        }
+
+        return bestId;
     }
 
     // ---------------------------------------------------------------------
     // SSL Helper Hook (für KerioSslHelper)
     // ---------------------------------------------------------------------
 
-    /**
-     * Baut eine SSLSocketFactory aus einem CA-Zertifikat-InputStream (PEM/DER).
-     * Diese Methode wird von KerioSslHelper genutzt.
-     */
-    public static javax.net.ssl.SSLSocketFactory buildCustomCaSocketFactory(java.io.InputStream caInputStream)
+    public static SSLSocketFactory buildCustomCaSocketFactory(InputStream caInputStream)
             throws Exception {
         java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
         java.security.cert.Certificate ca = cf.generateCertificate(caInputStream);
@@ -773,8 +888,8 @@ public class KerioApiClient {
     // JSON-RPC Call
     // ------------------------------------------------------------------------
     public synchronized JSONObject call(String method,
-            JSONObject params,
-            boolean expectResult) throws IOException, JSONException {
+                                        JSONObject params,
+                                        boolean expectResult) throws IOException, JSONException {
 
         if (params == null) {
             params = new JSONObject();

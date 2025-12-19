@@ -41,17 +41,18 @@ import de.schulz.keriosync.net.KerioApiClient;
 /**
  * SyncAdapter für Kalenderdaten von Kerio Connect.
  *
- * Aufgaben:
- * - Kerio-Ordner (privat + geteilt) per KerioApiClient laden
- * - Lokale Kalender (CalendarContract.Calendars) für diesen Account
- * anlegen/aktualisieren und über _SYNC_ID mit Kerio-Folder-ID verknüpfen
- * - Events pro Kalenderordner synchronisieren:
- * - RemoteEvent.uid <-> Events._SYNC_ID
- * - Inserts/Updates/Deletes
+ * Fix/Erweiterung:
+ * - Updates an bestehenden Terminen werden zuverlässig übertragen, weil:
+ * 1) KerioApiClient.fetchOccurrenceById() korrekt parst
+ * 2) _SYNC_ID wird (soweit möglich) auf echte Kerio-Occurrence-ID gemappt
+ * 3) Für alte locally-created Einträge mit _SYNC_ID = "eventId@dtStart" wird
+ * beim Update/Delete versucht,
+ * die echte Occurrence-ID nachträglich zu resolven und lokal zu reparieren.
  *
- * Erweiterung:
- * - Lokale neue Events (DIRTY=1, ohne SYNC_DATA2) als Events.create zum Server
- * pushen
+ * Wichtig:
+ * - _SYNC_ID: Kerio Occurrence-ID (id aus Occurrences.get)
+ * - SYNC_DATA2: Kerio Event-ID (eventId)
+ * - SYNC_DATA1: lastModificationTime (Millis als String)
  */
 public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
@@ -87,14 +88,11 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 ", initialize=" + initialize +
                 ", extras=" + extras + ")");
 
-        // --------------------------------------------------------------------
-        // WICHTIG: Unterdrücke Change-Trigger, damit unsere eigenen Inserts/Updates
-        // nicht direkt den JobScheduler wieder triggern (Sync-Schleife).
-        // --------------------------------------------------------------------
+        // Unterdrücke Change-Trigger, damit eigene Inserts/Updates nicht wieder
+        // triggern
         suppressChangeTriggers("sync-start:" + account.name, 30);
 
         try {
-            // 1. Account-Daten aus AccountManager lesen
             AccountManager am = AccountManager.get(mContext);
             String serverUrl = am.getUserData(account, KerioAccountConstants.KEY_SERVER_URL);
             String username = account.name;
@@ -118,7 +116,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             Log.d(TAG, "Verwende Kerio-Server: " + serverUrl + " für Benutzer: " + username);
             Log.d(TAG, "SSL-Konfiguration: trustAll=" + trustAll + ", customCaUri=" + caUri);
 
-            // 2. Optional: Custom-SSLSocketFactory für CA laden
             SSLSocketFactory customSslFactory = null;
             if (!trustAll && caUri != null) {
                 try {
@@ -130,20 +127,16 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 }
             }
 
-            // 3. Kerio-Client initialisieren und anmelden
             KerioApiClient client = new KerioApiClient(serverUrl, username, password, trustAll, customSslFactory);
             Log.d(TAG, "Rufe KerioApiClient.login() auf …");
             client.login();
             Log.d(TAG, "Login erfolgreich.");
 
-            // 4. Remote-Kalenderordner von Kerio holen
             List<KerioApiClient.RemoteCalendar> remoteCalendars = client.fetchCalendars();
             Log.d(TAG, "Anzahl Remote-Kalender (Kerio): " + remoteCalendars.size());
 
-            // 5. Lokale Kalender laden und mit Remote-Kalendern abgleichen
             Map<String, Long> localCalendarsByRemoteId = syncCalendarsForAccount(account, remoteCalendars, syncResult);
 
-            // 6. Events für jeden Kalender synchronisieren
             for (KerioApiClient.RemoteCalendar rc : remoteCalendars) {
                 Long localCalId = localCalendarsByRemoteId.get(rc.id);
                 if (localCalId == null) {
@@ -152,7 +145,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     continue;
                 }
 
-                // ✅ lokale Änderungen pushen (Delete/Update/Create)
+                // Push lokale Änderungen (Delete/Update/Create)
                 pushLocalDeletedEvents(account, localCalId, rc, client, syncResult);
                 pushLocalUpdatedEvents(account, localCalId, rc, client, syncResult);
                 pushLocalCreatedEvents(account, localCalId, rc, client, syncResult);
@@ -187,10 +180,32 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
         } finally {
-            // Nachlauf: kurze Unterdrückung, da Provider Notifications manchmal
-            // "nachziehen"
             suppressChangeTriggers("sync-end:" + account.name, 8);
         }
+    }
+
+    // ------------------------------------------------------------------------
+    // Helper: SyncAdapter-Events-URI
+    // ------------------------------------------------------------------------
+
+    private Uri buildSyncAdapterEventsUri(Account account) {
+        return CalendarContract.Events.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
+                .build();
+    }
+
+    private Uri buildSyncAdapterEventsUri(Account account, long eventId) {
+        Uri base = buildSyncAdapterEventsUri(account);
+        return ContentUris.withAppendedId(base, eventId);
+    }
+
+    private boolean isLikelyKerioOccurrenceId(String syncId) {
+        if (syncId == null)
+            return false;
+        // typische Kerio IDs: keriostorage://occurrence/...
+        return syncId.startsWith("keriostorage://occurrence/") || syncId.startsWith("keriostorage:");
     }
 
     // ------------------------------------------------------------------------
@@ -203,7 +218,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             KerioApiClient client,
             SyncResult syncResult) {
 
-        // readOnly-Kalender niemals pushen
         if (remoteCalendar != null && remoteCalendar.readOnly) {
             Log.i(TAG, "pushLocalCreatedEvents: RemoteCalendar '" + remoteCalendar.name + "' ist readOnly – Skip.");
             return;
@@ -216,7 +230,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 CalendarContract.Events.DIRTY,
                 CalendarContract.Events.DELETED,
                 CalendarContract.Events.SYNC_DATA2, // remote eventId (optional)
-                CalendarContract.Events._SYNC_ID,
+                CalendarContract.Events._SYNC_ID, // remote occurrenceId (sollte es sein)
                 CalendarContract.Events.DTSTART,
                 CalendarContract.Events.DTEND,
                 CalendarContract.Events.ALL_DAY,
@@ -254,14 +268,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 String description = c.getString(9);
                 String location = c.getString(10);
 
-                if (dirty == 0 || deleted != 0) {
+                if (dirty == 0 || deleted != 0)
                     continue;
-                }
 
                 // Nur CREATE: remoteEventId fehlt
-                if (!TextUtils.isEmpty(remoteEventId)) {
+                if (!TextUtils.isEmpty(remoteEventId))
                     continue;
-                }
 
                 if (dtStart <= 0L) {
                     Log.w(TAG, "pushLocalCreatedEvents: DTSTART fehlt, skip localId=" + localId);
@@ -287,27 +299,35 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                         continue;
                     }
 
-                    String newUid = cr.id + "@" + dtStart;
+                    // ✅ Jetzt echte Occurrence-ID resolven (Events.create liefert meist Event-ID)
+                    String resolvedOccurrenceId = null;
+                    try {
+                        resolvedOccurrenceId = client.resolveOccurrenceIdForEvent(remoteCalendar.id, cr.id, dtStart);
+                    } catch (Exception ex) {
+                        Log.w(TAG, "resolveOccurrenceIdForEvent fehlgeschlagen (localId=" + localId + "): "
+                                + ex.getMessage(), ex);
+                    }
 
                     ContentValues cv = new ContentValues();
-                    cv.put(CalendarContract.Events.SYNC_DATA2, cr.id);
-                    cv.put(CalendarContract.Events._SYNC_ID, newUid);
+                    cv.put(CalendarContract.Events.SYNC_DATA2, cr.id); // Event-ID merken
+
+                    if (!TextUtils.isEmpty(resolvedOccurrenceId)) {
+                        cv.put(CalendarContract.Events._SYNC_ID, resolvedOccurrenceId); // ✅ echte Occurrence-ID
+                    } else {
+                        // Fallback: NICHT ideal, aber besser als nichts – Update/Repair versucht später
+                        // zu resolven
+                        String fallback = cr.id + "@" + dtStart;
+                        cv.put(CalendarContract.Events._SYNC_ID, fallback);
+                    }
+
                     cv.put(CalendarContract.Events.DIRTY, 0);
 
-                    Uri updUri = ContentUris.withAppendedId(eventsUri, localId);
-                    int rows = mContentResolver.update(
-                            updUri.buildUpon()
-                                    .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
-                                    .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
-                                    .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
-                                    .build(),
-                            cv,
-                            null,
-                            null);
+                    Uri updUri = buildSyncAdapterEventsUri(account, localId);
+                    int rows = mContentResolver.update(updUri, cv, null, null);
 
                     Log.i(TAG, "Event CREATE gepusht: localId=" + localId +
                             ", remoteEventId=" + cr.id +
-                            ", newUid=" + newUid +
+                            ", occurrenceId=" + resolvedOccurrenceId +
                             ", rows=" + rows +
                             ", oldSyncId=" + syncId);
 
@@ -339,7 +359,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
         final String[] PROJECTION = new String[] {
                 CalendarContract.Events._ID,
-                CalendarContract.Events._SYNC_ID
+                CalendarContract.Events._SYNC_ID,
+                CalendarContract.Events.SYNC_DATA2, // eventId (optional)
+                CalendarContract.Events.DTSTART
         };
 
         final String selection = CalendarContract.Events.CALENDAR_ID + "=? AND " +
@@ -354,15 +376,43 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     new String[] { String.valueOf(localCalendarId) },
                     null);
 
-            if (c == null) {
+            if (c == null)
                 return;
-            }
 
             while (c.moveToNext()) {
                 long localEventId = c.getLong(0);
                 String occurrenceId = c.getString(1);
+                String remoteEventId = c.getString(2);
+                long dtStart = c.getLong(3);
 
-                if (occurrenceId == null || occurrenceId.trim().isEmpty()) {
+                if (TextUtils.isEmpty(occurrenceId))
+                    continue;
+
+                // ✅ Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn über
+                // eventId+dtStart zu resolven
+                if (!isLikelyKerioOccurrenceId(occurrenceId) && !TextUtils.isEmpty(remoteEventId) && dtStart > 0) {
+                    try {
+                        String resolved = client.resolveOccurrenceIdForEvent(remoteCalendar.id, remoteEventId, dtStart);
+                        if (!TextUtils.isEmpty(resolved)) {
+                            occurrenceId = resolved;
+
+                            // lokal direkt reparieren (damit Folgevorgänge konsistent sind)
+                            ContentValues fix = new ContentValues();
+                            fix.put(CalendarContract.Events._SYNC_ID, resolved);
+                            resolver.update(buildSyncAdapterEventsUri(account, localEventId), fix, null, null);
+
+                            Log.i(TAG, "DELETE Repair: localId=" + localEventId + " -> occurrenceId=" + resolved);
+                        }
+                    } catch (Exception ex) {
+                        Log.w(TAG, "DELETE Repair resolveOccurrenceIdForEvent fehlgeschlagen: localId=" + localEventId
+                                + " " + ex.getMessage(), ex);
+                    }
+                }
+
+                if (!isLikelyKerioOccurrenceId(occurrenceId)) {
+                    Log.w(TAG,
+                            "pushLocalDeletedEvents: _SYNC_ID ist keine Occurrence-ID, DELETE wird übersprungen: localId="
+                                    + localEventId + ", _SYNC_ID=" + occurrenceId);
                     continue;
                 }
 
@@ -370,9 +420,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     client.deleteOccurrence(occurrenceId);
 
                     int rows = resolver.delete(
-                            CalendarContract.Events.CONTENT_URI,
-                            CalendarContract.Events._ID + "=?",
-                            new String[] { String.valueOf(localEventId) });
+                            buildSyncAdapterEventsUri(account, localEventId),
+                            null,
+                            null);
 
                     Log.i(TAG, "Event gelöscht (push->server): occurrenceId=" + occurrenceId +
                             ", localId=" + localEventId + ", rows=" + rows);
@@ -405,11 +455,17 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             KerioApiClient client,
             SyncResult syncResult) {
 
+        if (remoteCalendar != null && remoteCalendar.readOnly) {
+            Log.i(TAG, "pushLocalUpdatedEvents: RemoteCalendar '" + remoteCalendar.name + "' ist readOnly – Skip.");
+            return;
+        }
+
         final ContentResolver resolver = mContext.getContentResolver();
 
         final String[] PROJECTION = new String[] {
                 CalendarContract.Events._ID,
                 CalendarContract.Events._SYNC_ID,
+                CalendarContract.Events.SYNC_DATA2, // eventId
                 CalendarContract.Events.TITLE,
                 CalendarContract.Events.EVENT_LOCATION,
                 CalendarContract.Events.DESCRIPTION,
@@ -431,22 +487,48 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     new String[] { String.valueOf(localCalendarId) },
                     null);
 
-            if (c == null) {
+            if (c == null)
                 return;
-            }
 
             while (c.moveToNext()) {
                 long localEventId = c.getLong(0);
                 String occurrenceId = c.getString(1);
+                String remoteEventId = c.getString(2);
 
-                String title = c.getString(2);
-                String location = c.getString(3);
-                String description = c.getString(4);
-                long dtStart = c.getLong(5);
-                long dtEnd = c.getLong(6);
-                boolean allDay = c.getInt(7) == 1;
+                String title = c.getString(3);
+                String location = c.getString(4);
+                String description = c.getString(5);
+                long dtStart = c.getLong(6);
+                long dtEnd = c.getLong(7);
+                boolean allDay = c.getInt(8) == 1;
 
-                if (occurrenceId == null || occurrenceId.trim().isEmpty()) {
+                if (TextUtils.isEmpty(occurrenceId))
+                    continue;
+
+                // ✅ Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn zu
+                // resolven
+                if (!isLikelyKerioOccurrenceId(occurrenceId) && !TextUtils.isEmpty(remoteEventId) && dtStart > 0) {
+                    try {
+                        String resolved = client.resolveOccurrenceIdForEvent(remoteCalendar.id, remoteEventId, dtStart);
+                        if (!TextUtils.isEmpty(resolved)) {
+                            occurrenceId = resolved;
+
+                            ContentValues fix = new ContentValues();
+                            fix.put(CalendarContract.Events._SYNC_ID, resolved);
+                            resolver.update(buildSyncAdapterEventsUri(account, localEventId), fix, null, null);
+
+                            Log.i(TAG, "UPDATE Repair: localId=" + localEventId + " -> occurrenceId=" + resolved);
+                        }
+                    } catch (Exception ex) {
+                        Log.w(TAG, "UPDATE Repair resolveOccurrenceIdForEvent fehlgeschlagen: localId=" + localEventId
+                                + " " + ex.getMessage(), ex);
+                    }
+                }
+
+                if (!isLikelyKerioOccurrenceId(occurrenceId)) {
+                    Log.w(TAG,
+                            "pushLocalUpdatedEvents: _SYNC_ID ist keine Occurrence-ID, UPDATE wird übersprungen: localId="
+                                    + localEventId + ", _SYNC_ID=" + occurrenceId);
                     continue;
                 }
 
@@ -465,10 +547,10 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     cv.put(CalendarContract.Events.DIRTY, 0);
 
                     int rows = resolver.update(
-                            CalendarContract.Events.CONTENT_URI,
+                            buildSyncAdapterEventsUri(account, localEventId),
                             cv,
-                            CalendarContract.Events._ID + "=?",
-                            new String[] { String.valueOf(localEventId) });
+                            null,
+                            null);
 
                     Log.i(TAG, "Event aktualisiert (push->server): occurrenceId=" + occurrenceId +
                             ", localId=" + localEventId + ", rows=" + rows + ", title=" + title);
@@ -645,7 +727,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         String[] projection = new String[] {
                 CalendarContract.Events._ID,
                 CalendarContract.Events._SYNC_ID,
-                CalendarContract.Events.SYNC_DATA1, // lastModifiedUtcMillis (String/long)
+                CalendarContract.Events.SYNC_DATA1, // lastModifiedUtcMillis
                 CalendarContract.Events.DELETED,
                 CalendarContract.Events.TITLE
         };
@@ -696,17 +778,12 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
-        Uri syncEventsUri = eventsUri.buildUpon()
-                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
-                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
-                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
-                .build();
+        Uri syncEventsUri = buildSyncAdapterEventsUri(account);
 
         // Remote -> lokal (Insert/Update)
         for (KerioApiClient.RemoteEvent remote : remoteEvents) {
-            if (remote.uid == null || remote.uid.isEmpty()) {
+            if (remote.uid == null || remote.uid.isEmpty())
                 continue;
-            }
 
             LocalEventInfo local = localByUid.get(remote.uid);
 
@@ -725,9 +802,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Events.ALL_DAY, remote.allDay ? 1 : 0);
 
             // Sync-Mapping
-            values.put(CalendarContract.Events._SYNC_ID, remote.uid);
+            values.put(CalendarContract.Events._SYNC_ID, remote.uid); // ✅ occurrenceId
             values.put(CalendarContract.Events.SYNC_DATA1, String.valueOf(remoteLastMod));
-            values.put(CalendarContract.Events.SYNC_DATA2, remote.eventId); // optional
+            values.put(CalendarContract.Events.SYNC_DATA2, remote.eventId); // eventId
             values.put(CalendarContract.Events.DIRTY, 0);
 
             if (local == null) {
@@ -764,9 +841,9 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
         // Lokale Events löschen, die es remote nicht mehr gibt
         for (LocalEventInfo local : localByUid.values()) {
-            if (local.uid == null || local.uid.isEmpty()) {
+            if (local.uid == null || local.uid.isEmpty())
                 continue;
-            }
+
             if (!remoteUids.contains(local.uid)) {
                 Uri deleteUri = ContentUris.withAppendedId(syncEventsUri, local.id);
                 int rows = mContentResolver.delete(deleteUri, null, null);
