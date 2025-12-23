@@ -17,9 +17,6 @@ import android.provider.CalendarContract;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.io.IOException;
-import java.io.InterruptedIOException;
-
 import java.io.InputStream;
 import java.net.UnknownHostException;
 import java.security.KeyStore;
@@ -31,7 +28,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.locks.ReentrantLock;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
@@ -62,12 +58,37 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
     private static final String TAG = "KerioCalendarSync";
 
-    /** Prozess-weites Lock, um parallele Sync-Läufe zu verhindern. */
-    private static final ReentrantLock SYNC_LOCK = new ReentrantLock();
-
-
     private final ContentResolver mContentResolver;
     private final Context mContext;
+
+    /**
+     * Cache der zuletzt gelesenen lokalen Kalender-Infos (pro Remote-Calendar-ID).
+     * Wird pro Sync-Lauf neu aufgebaut und genutzt, um Nutzer-Einstellungen wie SYNC_EVENTS zu respektieren.
+     */
+    private volatile Map<String, LocalCalendarInfo> mLocalCalendarInfoByRemoteId = new HashMap<>();
+
+    /**
+     * Interne Struktur, um lokale Kalender-Einstellungen zu cachen,
+     * damit wir Nutzerwerte (Farbe, Sichtbarkeit, Sync-Flag) nicht überschreiben.
+     */
+    private static class LocalCalendarInfo {
+        /** Lokale CalendarContract.Calendars._ID */
+        long localId;
+
+        /** Remote Kerio FolderId (_SYNC_ID) */
+        String remoteId;
+
+        /** Nutzer-Sichtbarkeit (VISIBLE) */
+        boolean visible;
+
+        /** Nutzer-Sync-Schalter (SYNC_EVENTS) */
+        boolean syncEvents;
+
+        /** Nutzer-Farbe (CALENDAR_COLOR) – null, wenn nicht gesetzt */
+        Integer calendarColor;
+    }
+
+
 
     public KerioCalendarSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
@@ -95,14 +116,6 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 ", expedited=" + expedited +
                 ", initialize=" + initialize +
                 ", extras=" + extras + ")");
-
-        // Verhindere parallele Ausführung: Android kann mehrere Sync-Jobs kurz hintereinander starten/abbrechen.
-        boolean locked = SYNC_LOCK.tryLock();
-        if (!locked) {
-            Log.w(TAG, "Sync wird übersprungen: Es läuft bereits ein Sync (syncAlreadyInProgress). ");
-            return;
-        }
-
 
         // Unterdrücke Change-Trigger, damit eigene Inserts/Updates nicht wieder
         // triggern
@@ -161,6 +174,13 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     continue;
                 }
 
+                LocalCalendarInfo localInfo = mLocalCalendarInfoByRemoteId.get(rc.id);
+                if (localInfo != null && !localInfo.syncEvents) {
+                    Log.i(TAG, "Kalender ist lokal auf SYNC_EVENTS=0 gesetzt – überspringe Sync für: " +
+                            ((rc.displayName != null && !rc.displayName.isEmpty()) ? rc.displayName : rc.name));
+                    continue;
+                }
+
                 // Push lokale Änderungen (Delete/Update/Create)
                 pushLocalDeletedEvents(account, localCalId, rc, client, syncResult);
                 pushLocalUpdatedEvents(account, localCalId, rc, client, syncResult);
@@ -192,52 +212,15 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         } catch (UnknownHostException e) {
             Log.e(TAG, "DNS/Host-Problem beim Kalender-Sync: " + e.getMessage(), e);
             syncResult.stats.numIoExceptions++;
-        } catch (IOException e) {
-            if (isSyncCancelled(e)) {
-                Log.w(TAG, "Sync wurde vom System abgebrochen (Thread interrupt). Kein Fehler – wird später erneut versucht.", e);
-                // Kein numIoExceptions++: das ist kein echter Netzfehler, sondern ein Abbruch/Cancellation.
-            } else {
-                Log.e(TAG, "IO-Fehler beim Kalender-Sync: " + e.getMessage(), e);
-                syncResult.stats.numIoExceptions++;
-            }
         } catch (Exception e) {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
         } finally {
-            // Lock immer freigeben (falls gehalten).
-            if (SYNC_LOCK.isHeldByCurrentThread()) {
-                SYNC_LOCK.unlock();
-            }
-
             suppressChangeTriggers("sync-end:" + account.name, 8);
         }
     }
 
     // ------------------------------------------------------------------------
-
-    /**
-     * Ermittelt, ob ein IOException-Abbruch durch Thread-Interrupt (Cancel) verursacht wurde.
-     * Das passiert häufig, wenn Android einen Sync-Job beendet, weil bereits ein anderer Sync läuft,
-     * Constraints sich ändern oder der Job neu geplant wird.
-     */
-    private boolean isSyncCancelled(IOException e) {
-        if (e == null) {
-            return false;
-        }
-        if (e instanceof InterruptedIOException) {
-            return true;
-        }
-        Throwable c = e.getCause();
-        while (c != null) {
-            if (c instanceof InterruptedIOException) {
-                return true;
-            }
-            c = c.getCause();
-        }
-        String msg = e.getMessage();
-        return msg != null && msg.contains("CANCELLED_BY_INTERRUPT");
-    }
-
     // Helper: SyncAdapter-Events-URI
     // ------------------------------------------------------------------------
 
@@ -649,7 +632,10 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         String[] projection = new String[] {
                 CalendarContract.Calendars._ID,
                 CalendarContract.Calendars._SYNC_ID,
-                CalendarContract.Calendars.CALENDAR_DISPLAY_NAME
+                CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+                CalendarContract.Calendars.VISIBLE,
+                CalendarContract.Calendars.SYNC_EVENTS,
+                CalendarContract.Calendars.CALENDAR_COLOR
         };
 
         String selection = CalendarContract.Calendars.ACCOUNT_NAME + "=? AND " +
@@ -659,6 +645,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         Cursor cursor = mContentResolver.query(calendarsUri, projection, selection, selectionArgs, null);
 
         Map<String, Long> remoteIdToLocalId = new HashMap<>();
+        Map<String, LocalCalendarInfo> localInfoByRemoteId = new HashMap<>();
         Map<Long, String> localCalendarRemoteId = new HashMap<>();
 
         if (cursor != null) {
@@ -667,14 +654,28 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     long localId = cursor.getLong(0);
                     String syncId = cursor.getString(1);
                     String name = cursor.getString(2);
+                    int visible = cursor.getInt(3);
+                    int syncEvents = cursor.getInt(4);
+                    Integer calendarColor = cursor.isNull(5) ? null : cursor.getInt(5);
 
                     if (syncId != null && !syncId.isEmpty()) {
                         remoteIdToLocalId.put(syncId, localId);
                         localCalendarRemoteId.put(localId, syncId);
 
+                        LocalCalendarInfo info = new LocalCalendarInfo();
+                        info.localId = localId;
+                        info.remoteId = syncId;
+                        info.visible = visible != 0;
+                        info.syncEvents = syncEvents != 0;
+                        info.calendarColor = calendarColor;
+                        localInfoByRemoteId.put(syncId, info);
+
                         Log.d(TAG, "Lokaler Kalender gefunden: id=" + localId +
                                 ", _SYNC_ID=" + syncId +
-                                ", name=" + name);
+                                ", name=" + name +
+                                ", visible=" + visible +
+                                ", syncEvents=" + syncEvents +
+                                ", calendarColor=" + calendarColor);
                     }
                 }
             } finally {
@@ -682,6 +683,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
+        mLocalCalendarInfoByRemoteId = localInfoByRemoteId;
         Uri syncCalendarsUri = calendarsUri.buildUpon()
                 .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
                 .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
@@ -708,15 +710,16 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
                             ? CalendarContract.Calendars.CAL_ACCESS_READ
                             : CalendarContract.Calendars.CAL_ACCESS_OWNER);
 
-            values.put(CalendarContract.Calendars.VISIBLE, 1);
-            values.put(CalendarContract.Calendars.SYNC_EVENTS, 1);
 
-            values.put(CalendarContract.Calendars.CALENDAR_COLOR, 0xff33b5e5);
             values.put(CalendarContract.Calendars.OWNER_ACCOUNT, account.name);
 
             values.put(CalendarContract.Calendars._SYNC_ID, rc.id);
 
             if (localId == null) {
+                // Defaults nur beim ersten Anlegen setzen – Nutzer-Änderungen (Farbe/Sichtbarkeit/Sync) dürfen nicht überschrieben werden.
+                values.put(CalendarContract.Calendars.VISIBLE, 1);
+                values.put(CalendarContract.Calendars.SYNC_EVENTS, 1);
+                // Keine feste Standardfarbe erzwingen – Android wählt eine; Nutzer kann sie später ändern.
                 Uri inserted = mContentResolver.insert(syncCalendarsUri, values);
                 if (inserted != null) {
                     long newId = ContentUris.parseId(inserted);

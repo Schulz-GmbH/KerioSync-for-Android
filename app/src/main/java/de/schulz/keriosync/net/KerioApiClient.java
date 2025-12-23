@@ -9,7 +9,6 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -1306,12 +1305,6 @@ public class KerioApiClient {
 
             return respJson;
 
-        } catch (InterruptedIOException e) {
-            // Sync-Thread wurde unterbrochen (z.B. weil Android den Sync-Job beendet oder bereits ein anderer Sync läuft).
-            // Wichtig: Interrupt-Flag wieder setzen, damit Caller korrekt reagieren kann.
-            Thread.currentThread().interrupt();
-            Log.w(TAG, "JSON-RPC-Call " + method + " abgebrochen (Thread interrupt). Sync wurde vom System beendet.", e);
-            throw new IOException("CANCELLED_BY_INTERRUPT", e);
         } catch (IOException e) {
             Log.e(TAG, "IOException beim JSON-RPC-Call " + method + ": " + e.getMessage(), e);
             throw e;
@@ -1557,3 +1550,5 @@ public class KerioApiClient {
         return inclusiveEndDate.format(KERIO_DATE_ONLY_FORMAT);
     }
 }
+
+
