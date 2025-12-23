@@ -833,9 +833,17 @@ public class KerioApiClient {
         ev.put("description", event.description != null ? event.description : "");
         ev.put("isAllDay", event.allDay);
 
-        ev.put("start", buildKerioUtcString(event.dtStartUtcMillis));
-        ev.put("end", buildKerioUtcString(event.dtEndUtcMillis));
-
+        if (event.allDay) {
+            // Kerio erwartet bei All-Day häufig Date-only Werte (yyyyMMdd).
+            // Android CalendarContract: DTSTART inklusiv, DTEND exklusiv.
+            ev.put("start", formatKerioDateOnlyFromUtcMillis(event.dtStartUtcMillis));
+            ev.put("end", formatKerioInclusiveEndDateOnlyFromAndroidExclusiveEnd(
+                    event.dtEndUtcMillis,
+                    event.dtStartUtcMillis));
+        } else {
+            ev.put("start", formatKerioUtcDateTime(event.dtStartUtcMillis));
+            ev.put("end", formatKerioUtcDateTime(event.dtEndUtcMillis));
+        }
         JSONArray events = new JSONArray();
         events.put(ev);
 
@@ -1550,5 +1558,3 @@ public class KerioApiClient {
         return inclusiveEndDate.format(KERIO_DATE_ONLY_FORMAT);
     }
 }
-
-

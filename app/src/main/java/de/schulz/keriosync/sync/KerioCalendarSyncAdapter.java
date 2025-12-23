@@ -17,23 +17,15 @@ import android.provider.CalendarContract;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.io.InputStream;
 import java.net.UnknownHostException;
-import java.security.KeyStore;
-import java.security.SecureRandom;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.net.KerioApiClient;
@@ -936,65 +928,12 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
     // ------------------------------------------------------------------------
 
     private SSLSocketFactory createSslSocketFactoryForCaUri(Context context, Uri caUri) throws Exception {
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        Certificate ca;
-        try (InputStream caInput = context.getContentResolver().openInputStream(caUri)) {
-            if (caInput == null) {
-                throw new IllegalArgumentException("Konnte InputStream für CA-URI nicht öffnen: " + caUri);
-            }
-            ca = cf.generateCertificate(caInput);
-        }
-
-        KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
-        keyStore.load(null, null);
-        keyStore.setCertificateEntry("keriosync-ca", ca);
-
-        X509TrustManager tm = new SingleKeyStoreX509TrustManager(keyStore);
-
-        TrustManager[] trustManagers = new TrustManager[] { tm };
-
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, trustManagers, new SecureRandom());
-        return sslContext.getSocketFactory();
+        // Delegiere an zentrale Helper-Implementierung, die eine TrustManagerFactory
+        // mit dem bereitgestellten KeyStore initialisiert (korrekte Zertifikatsprüfung).
+        return KerioSslHelper.loadCustomCaSocketFactory(context, caUri);
     }
 
-    private static class SingleKeyStoreX509TrustManager implements X509TrustManager {
-        private final X509TrustManager mDelegate;
-
-        SingleKeyStoreX509TrustManager(KeyStore keyStore) throws Exception {
-            TrustManager[] tms = javax.net.ssl.TrustManagerFactory
-                    .getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm())
-                    .getTrustManagers();
-            X509TrustManager found = null;
-            for (TrustManager tm : tms) {
-                if (tm instanceof X509TrustManager) {
-                    found = (X509TrustManager) tm;
-                    break;
-                }
-            }
-            if (found == null) {
-                throw new IllegalStateException("Kein X509TrustManager gefunden");
-            }
-            mDelegate = found;
-        }
-
-        @Override
-        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-            // Nicht benötigt
-        }
-
-        @Override
-        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-            // Delegation (hier wäre Raum für erweitertes Verhalten)
-        }
-
-        @Override
-        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-            return mDelegate.getAcceptedIssuers();
-        }
-    }
-
-    // ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
     // Trigger-Unterdrückung (Prefs)
     // ------------------------------------------------------------------------
 
