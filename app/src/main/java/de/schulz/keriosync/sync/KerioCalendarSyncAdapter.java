@@ -17,6 +17,9 @@ import android.provider.CalendarContract;
 import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.IOException;
+import java.io.InterruptedIOException;
+
 import java.io.InputStream;
 import java.net.UnknownHostException;
 import java.security.KeyStore;
@@ -28,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
@@ -58,6 +62,10 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
     private static final String TAG = "KerioCalendarSync";
 
+    /** Prozess-weites Lock, um parallele Sync-Läufe zu verhindern. */
+    private static final ReentrantLock SYNC_LOCK = new ReentrantLock();
+
+
     private final ContentResolver mContentResolver;
     private final Context mContext;
 
@@ -87,6 +95,14 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 ", expedited=" + expedited +
                 ", initialize=" + initialize +
                 ", extras=" + extras + ")");
+
+        // Verhindere parallele Ausführung: Android kann mehrere Sync-Jobs kurz hintereinander starten/abbrechen.
+        boolean locked = SYNC_LOCK.tryLock();
+        if (!locked) {
+            Log.w(TAG, "Sync wird übersprungen: Es läuft bereits ein Sync (syncAlreadyInProgress). ");
+            return;
+        }
+
 
         // Unterdrücke Change-Trigger, damit eigene Inserts/Updates nicht wieder
         // triggern
@@ -176,15 +192,52 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         } catch (UnknownHostException e) {
             Log.e(TAG, "DNS/Host-Problem beim Kalender-Sync: " + e.getMessage(), e);
             syncResult.stats.numIoExceptions++;
+        } catch (IOException e) {
+            if (isSyncCancelled(e)) {
+                Log.w(TAG, "Sync wurde vom System abgebrochen (Thread interrupt). Kein Fehler – wird später erneut versucht.", e);
+                // Kein numIoExceptions++: das ist kein echter Netzfehler, sondern ein Abbruch/Cancellation.
+            } else {
+                Log.e(TAG, "IO-Fehler beim Kalender-Sync: " + e.getMessage(), e);
+                syncResult.stats.numIoExceptions++;
+            }
         } catch (Exception e) {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
         } finally {
+            // Lock immer freigeben (falls gehalten).
+            if (SYNC_LOCK.isHeldByCurrentThread()) {
+                SYNC_LOCK.unlock();
+            }
+
             suppressChangeTriggers("sync-end:" + account.name, 8);
         }
     }
 
     // ------------------------------------------------------------------------
+
+    /**
+     * Ermittelt, ob ein IOException-Abbruch durch Thread-Interrupt (Cancel) verursacht wurde.
+     * Das passiert häufig, wenn Android einen Sync-Job beendet, weil bereits ein anderer Sync läuft,
+     * Constraints sich ändern oder der Job neu geplant wird.
+     */
+    private boolean isSyncCancelled(IOException e) {
+        if (e == null) {
+            return false;
+        }
+        if (e instanceof InterruptedIOException) {
+            return true;
+        }
+        Throwable c = e.getCause();
+        while (c != null) {
+            if (c instanceof InterruptedIOException) {
+                return true;
+            }
+            c = c.getCause();
+        }
+        String msg = e.getMessage();
+        return msg != null && msg.contains("CANCELLED_BY_INTERRUPT");
+    }
+
     // Helper: SyncAdapter-Events-URI
     // ------------------------------------------------------------------------
 
@@ -960,5 +1013,3 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
         }
     }
 }
-
-
