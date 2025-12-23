@@ -1,3 +1,24 @@
+## [v0.9.5] – 2025-12-23
+
+### Added
+
+- Launcher-freier Betrieb der App (kein App-Icon in der App-Übersicht)
+- Debug-spezifische Launcher-Activity für komfortables Entwickeln in Android Studio
+- Vollständig korrektes Adaptive App Icon (API 26+)
+  - Foreground/Background sauber getrennt
+  - Angepasste Skalierung für systemkonforme Darstellung
+- Saubere Systemintegration über Android Account Settings
+
+### Fixed
+
+- Behebung von Resource-Linking-Fehlern durch doppelte Drawable-Namen
+- Korrekte Trennung von Adaptive-Icon-Ressourcen (`mipmap-anydpi-v26`)
+- Verhindert fehlerhafte Manifest-Einträge (`adaptive-icon` fälschlich im Manifest)
+- Stabiler Build bei mehrfachen Resource-Merges (PNG vs. XML)
+- Sicherstellung der Existenz von `@string/app_name` für AccountAuthenticator
+
+---
+
 ## [v0.9.4] – 2025-12-23
 
 ### Added
