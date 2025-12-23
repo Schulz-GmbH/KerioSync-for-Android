@@ -299,7 +299,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                         continue;
                     }
 
-                    // ✅ Jetzt echte Occurrence-ID resolven (Events.create liefert meist Event-ID)
+                    // Jetzt echte Occurrence-ID resolven (Events.create liefert meist Event-ID)
                     String resolvedOccurrenceId = null;
                     try {
                         resolvedOccurrenceId = client.resolveOccurrenceIdForEvent(remoteCalendar.id, cr.id, dtStart);
@@ -312,7 +312,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                     cv.put(CalendarContract.Events.SYNC_DATA2, cr.id); // Event-ID merken
 
                     if (!TextUtils.isEmpty(resolvedOccurrenceId)) {
-                        cv.put(CalendarContract.Events._SYNC_ID, resolvedOccurrenceId); // ✅ echte Occurrence-ID
+                        cv.put(CalendarContract.Events._SYNC_ID, resolvedOccurrenceId); // echte Occurrence-ID
                     } else {
                         // Fallback: NICHT ideal, aber besser als nichts – Update/Repair versucht später
                         // zu resolven
@@ -388,7 +388,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 if (TextUtils.isEmpty(occurrenceId))
                     continue;
 
-                // ✅ Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn über
+                // Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn über
                 // eventId+dtStart zu resolven
                 if (!isLikelyKerioOccurrenceId(occurrenceId) && !TextUtils.isEmpty(remoteEventId) && dtStart > 0) {
                     try {
@@ -505,7 +505,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 if (TextUtils.isEmpty(occurrenceId))
                     continue;
 
-                // ✅ Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn zu
+                // Reparatur: Wenn _SYNC_ID kein Kerio occurrenceId ist, versuche ihn zu
                 // resolven
                 if (!isLikelyKerioOccurrenceId(occurrenceId) && !TextUtils.isEmpty(remoteEventId) && dtStart > 0) {
                     try {
@@ -802,7 +802,7 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Events.ALL_DAY, remote.allDay ? 1 : 0);
 
             // Sync-Mapping
-            values.put(CalendarContract.Events._SYNC_ID, remote.uid); // ✅ occurrenceId
+            values.put(CalendarContract.Events._SYNC_ID, remote.uid); // occurrenceId
             values.put(CalendarContract.Events.SYNC_DATA1, String.valueOf(remoteLastMod));
             values.put(CalendarContract.Events.SYNC_DATA2, remote.eventId); // eventId
             values.put(CalendarContract.Events.DIRTY, 0);

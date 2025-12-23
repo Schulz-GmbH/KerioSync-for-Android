@@ -90,7 +90,8 @@ public class KerioApiClient {
      * Kerio Date-only Format (Ganztags-/Mehrtagestermine)
      * Beispiel: 20251217
      */
-    private static final DateTimeFormatter KERIO_DATE_ONLY_FORMAT =            DateTimeFormatter.BASIC_ISO_DATE.withLocale(Locale.US);
+    private static final DateTimeFormatter KERIO_DATE_ONLY_FORMAT = DateTimeFormatter.BASIC_ISO_DATE
+            .withLocale(Locale.US);
     /**
      * Vollständige JSON-RPC-Endpoint-URL, z. B.
      * https://host/webmail/api/jsonrpc/
@@ -382,13 +383,12 @@ public class KerioApiClient {
 
         for (int i = 0; i < list.length(); i++) {
             JSONObject occ = list.optJSONObject(i);
-            if (occ == null) {
+            if (occ == null)
                 continue;
-            }
 
             RemoteEvent evt = new RemoteEvent();
 
-            // ✅ Kerio Occurrence-ID (wichtig für Update/Delete)
+            // Kerio Occurrence-ID (wichtig für Update/Delete)
             evt.uid = occ.optString("id", null);
 
             // Event-ID (für Zuordnung/Debug/Resolve)
@@ -400,14 +400,26 @@ public class KerioApiClient {
             evt.description = occ.optString("description", "");
             evt.location = occ.optString("location", "");
 
+            // <<< WICHTIG: allDay VOR Start/End bestimmen >>>
+            evt.allDay = occ.optBoolean("isAllDay", false);
+
             String startStr = occ.optString("start", null);
             if (startStr != null && !startStr.isEmpty()) {
-                evt.dtStartUtcMillis = parseKerioUtcDateTimeString(startStr);
+                if (evt.allDay && isKerioDateOnly(startStr)) {
+                    evt.dtStartUtcMillis = parseKerioDateOnlyStartUtcMillis(startStr);
+                } else {
+                    evt.dtStartUtcMillis = parseKerioUtcDateTimeString(startStr);
+                }
             }
 
             String endStr = occ.optString("end", null);
             if (endStr != null && !endStr.isEmpty()) {
-                evt.dtEndUtcMillis = parseKerioUtcDateTimeString(endStr);
+                if (evt.allDay && isKerioDateOnly(endStr)) {
+                    // Kerio liefert hier INKLUSIV -> Android braucht EXKLUSIV
+                    evt.dtEndUtcMillis = parseKerioDateOnlyEndExclusiveUtcMillis(endStr);
+                } else {
+                    evt.dtEndUtcMillis = parseKerioUtcDateTimeString(endStr);
+                }
             }
 
             String lmStr = occ.optString("lastModificationTime", null);
@@ -419,14 +431,11 @@ public class KerioApiClient {
                 evt.lastModifiedUtc = 0L;
             }
 
-            evt.allDay = occ.optBoolean("isAllDay", false);
-
             if (evt.dtEndUtcMillis <= 0 && evt.dtStartUtcMillis > 0) {
                 evt.dtEndUtcMillis = evt.dtStartUtcMillis + (30L * 60L * 1000L);
             }
 
             if (evt.uid == null || evt.uid.isEmpty()) {
-                // Fallback – sollte in der Praxis aber nicht nötig sein
                 if (evt.eventId != null && evt.dtStartUtcMillis > 0) {
                     evt.uid = evt.eventId + "@" + evt.dtStartUtcMillis;
                 }
@@ -535,7 +544,7 @@ public class KerioApiClient {
     }
 
     /**
-     * ✅ Event auf dem Server anlegen (Events.create)
+     * Event auf dem Server anlegen (Events.create)
      *
      * Events.create liefert in der Praxis oft eine Event-ID zurück.
      * Für Update/Delete brauchst du aber die Occurrence-ID (Occurrences.*).
@@ -696,17 +705,24 @@ public class KerioApiClient {
             existing.put("description", nullToEmpty(updated.description));
             existing.put("isAllDay", updated.allDay);
 
-            // >>> FIX: Ganztags-/Mehrtagestermine sauber als Date-only senden, damit Kerio
-            // konsistent bleibt.
             if (updated.dtStartUtcMillis > 0) {
-                existing.put("start", updated.allDay
-                        ? formatKerioUtcDateOnly(updated.dtStartUtcMillis)
-                        : formatKerioUtcDateTime(updated.dtStartUtcMillis));
+                if (updated.allDay) {
+                    // Kerio Date-only Start
+                    existing.put("start", formatKerioDateOnlyFromUtcMillis(updated.dtStartUtcMillis));
+                } else {
+                    existing.put("start", formatKerioUtcDateTime(updated.dtStartUtcMillis));
+                }
             }
+
             if (updated.dtEndUtcMillis > 0) {
-                existing.put("end", updated.allDay
-                        ? formatKerioUtcDateOnly(updated.dtEndUtcMillis)
-                        : formatKerioUtcDateTime(updated.dtEndUtcMillis));
+                if (updated.allDay) {
+                    // Android DTEND ist EXKLUSIV -> Kerio will INKLUSIV (bei Date-only)
+                    existing.put("end", formatKerioInclusiveEndDateOnlyFromAndroidExclusiveEnd(
+                            updated.dtEndUtcMillis,
+                            updated.dtStartUtcMillis));
+                } else {
+                    existing.put("end", formatKerioUtcDateTime(updated.dtEndUtcMillis));
+                }
             }
 
             existing.put("modification", "modifyThis");
@@ -729,7 +745,7 @@ public class KerioApiClient {
     }
 
     /**
-     * ✅ FIX: Lädt eine Occurrence als JSONObject über Occurrences.getById.
+     * FIX: Lädt eine Occurrence als JSONObject über Occurrences.getById.
      *
      * Vorher war hier der zentrale Bug: du hast resp.optJSONArray("result")
      * genutzt,
@@ -782,7 +798,7 @@ public class KerioApiClient {
     }
 
     /**
-     * ✅ Helper: Für ein neu erstelltes Event (Events.create -> eventId) die
+     * Helper: Für ein neu erstelltes Event (Events.create -> eventId) die
      * passende Occurrence-ID ermitteln.
      *
      * Idee:
@@ -1153,6 +1169,16 @@ public class KerioApiClient {
 
         final String v = kerioDateTime.trim();
 
+        // Date-only fallback: als Start-of-day UTC interpretieren
+        if (isKerioDateOnly(v)) {
+            try {
+                return parseKerioDateOnlyStartUtcMillis(v);
+            } catch (Exception e) {
+                Log.w(TAG, "Konnte Kerio Date-only nicht parsen: '" + v + "'", e);
+                return 0L;
+            }
+        }
+
         // 1) Kerio liefert bei Ganztags-Terminen teils nur ein Datum: yyyyMMdd (z. B.
         // 20251217)
         // Wir interpretieren dies als 00:00:00 UTC.
@@ -1205,5 +1231,61 @@ public class KerioApiClient {
     private String buildKerioUtcString(long utcMillis) {
         Instant instant = Instant.ofEpochMilli(utcMillis);
         return KERIO_UTC_Z_FORMAT.withZone(ZoneOffset.UTC).format(instant);
+    }
+
+    private static boolean isKerioDateOnly(String v) {
+        return v != null && v.matches("^\\d{8}$");
+    }
+
+    /**
+     * Kerio Date-only Start: yyyyMMdd -> 00:00 UTC (Millis)
+     */
+    private static long parseKerioDateOnlyStartUtcMillis(String yyyymmdd) {
+        LocalDate d = LocalDate.parse(yyyymmdd, KERIO_DATE_ONLY_FORMAT);
+        return d.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+    }
+
+    /**
+     * Kerio Date-only End ist bei deinem Server INKLUSIV.
+     * Android erwartet DTEND bei All-Day EXKLUSIV (00:00 des Folgetags).
+     *
+     * yyyyMMdd (inkl. Endtag) -> (Endtag + 1) 00:00 UTC (Millis)
+     */
+    private static long parseKerioDateOnlyEndExclusiveUtcMillis(String yyyymmddInclusiveEnd) {
+        LocalDate d = LocalDate.parse(yyyymmddInclusiveEnd, KERIO_DATE_ONLY_FORMAT);
+        return d.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
+    }
+
+    /**
+     * Format yyyyMMdd aus UTC-Millis (nimmt das UTC-Datum).
+     */
+    private static String formatKerioDateOnlyFromUtcMillis(long utcMillis) {
+        LocalDate d = Instant.ofEpochMilli(utcMillis).atZone(ZoneOffset.UTC).toLocalDate();
+        return d.format(KERIO_DATE_ONLY_FORMAT);
+    }
+
+    /**
+     * Android liefert bei All-Day DTEND EXKLUSIV.
+     * Kerio erwartet bei Date-only hier INKLUSIV -> also ein Tag zurück.
+     */
+    private static String formatKerioInclusiveEndDateOnlyFromAndroidExclusiveEnd(long dtEndExclusiveUtcMillis,
+            long dtStartUtcMillis) {
+        if (dtEndExclusiveUtcMillis <= 0) {
+            // Fallback: wenn kein Ende da ist, nimm Start als 1-Tages Event
+            return formatKerioDateOnlyFromUtcMillis(dtStartUtcMillis);
+        }
+
+        LocalDate endExclusiveDate = Instant.ofEpochMilli(dtEndExclusiveUtcMillis).atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate inclusiveEndDate = endExclusiveDate.minusDays(1);
+
+        // Safety: falls End <= Start, auf Start clampen
+        if (dtStartUtcMillis > 0) {
+            LocalDate startDate = Instant.ofEpochMilli(dtStartUtcMillis).atZone(ZoneOffset.UTC).toLocalDate();
+            if (inclusiveEndDate.isBefore(startDate)) {
+                inclusiveEndDate = startDate;
+            }
+        }
+
+        return inclusiveEndDate.format(KERIO_DATE_ONLY_FORMAT);
     }
 }

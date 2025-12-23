@@ -16,8 +16,7 @@
             android:id="@+id/edtServerUrl"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Server-URL (z.B. https://sh-dc1.schulz-hygiene.de/webmail/api/jsonrpc/)"
-            android:text="https://sh-dc1.schulz-hygiene.de"
+            android:hint="Server-URL (z.B. https://sh-dc1.domain.com/webmail/api/jsonrpc/)"
             android:inputType="textUri" />
 
         <EditText
@@ -25,8 +24,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:hint="Benutzername (z.B. user@schulz-hygiene.de)"
-            android:text="mustermann@schulz-hygiene.de"
+            android:hint="Benutzername (z.B. user@domain.com)"
             android:inputType="textEmailAddress" />
 
         <EditText
@@ -35,7 +33,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:hint="Passwort"
-            android:text="*olivetti2018#+"
             android:inputType="textPassword" />
 
         <!-- SSL / Zertifikate -->
