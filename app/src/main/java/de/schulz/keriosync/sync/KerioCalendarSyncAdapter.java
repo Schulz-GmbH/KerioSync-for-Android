@@ -646,10 +646,11 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             values.put(CalendarContract.Calendars.ACCOUNT_NAME, account.name);
             values.put(CalendarContract.Calendars.ACCOUNT_TYPE, account.type);
 
-            values.put(CalendarContract.Calendars.NAME, rc.name);
-            values.put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, rc.name);
+            String displayName = (rc.displayName != null && !rc.displayName.isEmpty()) ? rc.displayName : rc.name;
 
-            values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+            values.put(CalendarContract.Calendars.NAME, displayName);
+values.put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, displayName);
+values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
                     rc.readOnly
                             ? CalendarContract.Calendars.CAL_ACCESS_READ
                             : CalendarContract.Calendars.CAL_ACCESS_OWNER);
@@ -959,3 +960,5 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 }
+
+

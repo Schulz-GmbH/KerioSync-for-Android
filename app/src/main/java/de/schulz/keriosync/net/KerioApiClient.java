@@ -223,7 +223,28 @@ public class KerioApiClient {
     public static class RemoteCalendar {
         public String id;
         public String name;
+
+        /** Optional: Name, der in Android als Kalender-DisplayName genutzt werden kann (z.B. "Public: Team", "Max: Urlaub"). */
+        public String displayName;
+
+        /** Owner (bei Shared/Delegation häufig der Postfach-/Benutzername). */
         public String owner;
+
+        /** Owner-E-Mail, falls vom Server geliefert. */
+        public String ownerEmail;
+
+        /** placeType laut Kerio (z.B. FPlaceMailbox, FPlacePeople, FPlacePublic, FPlaceResources, ...). */
+        public String placeType;
+
+        /** True, wenn dieser Kalender aus Public Folders stammt. */
+        public boolean isPublic;
+
+        /** True, wenn dieser Kalender aus Shared Folders stammt. */
+        public boolean isShared;
+
+        /** True, wenn dieser Kalender delegiert ist (on behalf of). */
+        public boolean isDelegated;
+
         public boolean readOnly;
         public String color;
 
@@ -232,7 +253,13 @@ public class KerioApiClient {
             return "RemoteCalendar{" +
                     "id='" + id + '\'' +
                     ", name='" + name + '\'' +
+                    ", displayName='" + displayName + '\'' +
                     ", owner='" + owner + '\'' +
+                    ", ownerEmail='" + ownerEmail + '\'' +
+                    ", placeType='" + placeType + '\'' +
+                    ", isPublic=" + isPublic +
+                    ", isShared=" + isShared +
+                    ", isDelegated=" + isDelegated +
                     ", readOnly=" + readOnly +
                     ", color='" + color + '\'' +
                     '}';
@@ -293,19 +320,63 @@ public class KerioApiClient {
     public List<RemoteCalendar> fetchCalendars() throws IOException, JSONException {
         ensureLoggedIn();
 
-        List<RemoteCalendar> calendars = new ArrayList<>();
+        // Feature: Zusätzlich zu den eigenen Kalendern werden auch Public sowie Shared/Delegated Kalender
+        // eingebunden (soweit die Server-Version die Methoden bereitstellt).
+        //
+        // 1) Eigene Kalender: Folders.get
+        // 2) Public Kalender: Folders.getPublic (optional)
+        // 3) Shared/Delegated: Folders.getSharedMailboxList (optional)
+        //    Optional Filter: Folders.getSubscribed (wenn vorhanden), um nur "eingeblendete" Kalender zu übernehmen.
 
-        JSONObject params = new JSONObject();
-        JSONObject resp = call("Folders.get", params, true);
+        Map<String, RemoteCalendar> byId = new HashMap<>();
 
-        if (!resp.has("result")) {
-            return calendars;
+        // (1) Eigene Kalender
+        JSONObject resp = call("Folders.get", new JSONObject(), true);
+        addCalendarsFromFolderResult(resp, byId, false, false, null, null);
+
+        // (2) Public Kalender (optional)
+        try {
+            JSONObject publicResp = call("Folders.getPublic", new JSONObject(), true);
+            addCalendarsFromFolderResult(publicResp, byId, true, false, null, null);
+        } catch (Exception e) {
+            Log.i(TAG, "Folders.getPublic nicht verfügbar/fehlgeschlagen: " + e.getMessage());
+        }
+
+        // (3) Subscribed IDs (optional)
+        List<String> subscribedFolderIds = new ArrayList<>();
+        try {
+            JSONObject subsResp = call("Folders.getSubscribed", new JSONObject(), true);
+            subscribedFolderIds = extractSubscribedFolderIds(subsResp);
+        } catch (Exception e) {
+            Log.i(TAG, "Folders.getSubscribed nicht verfügbar/fehlgeschlagen: " + e.getMessage());
+        }
+
+        // (4) Shared/Delegated (optional)
+        try {
+            JSONObject sharedResp = call("Folders.getSharedMailboxList", new JSONObject(), true);
+            addCalendarsFromSharedMailboxListResult(sharedResp, byId, subscribedFolderIds);
+        } catch (Exception e) {
+            Log.i(TAG, "Folders.getSharedMailboxList nicht verfügbar/fehlgeschlagen: " + e.getMessage());
+        }
+
+        return new ArrayList<>(byId.values());
+    }
+
+    private void addCalendarsFromFolderResult(JSONObject resp,
+                                              Map<String, RemoteCalendar> byId,
+                                              boolean isPublic,
+                                              boolean isShared,
+                                              String forcedOwnerName,
+                                              String forcedOwnerEmail) throws JSONException {
+
+        if (resp == null || !resp.has("result")) {
+            return;
         }
 
         JSONObject result = resp.getJSONObject("result");
         JSONArray folderList = result.optJSONArray("list");
         if (folderList == null) {
-            return calendars;
+            return;
         }
 
         for (int i = 0; i < folderList.length(); i++) {
@@ -314,46 +385,236 @@ public class KerioApiClient {
                 continue;
             }
 
-            String type = folder.optString("type", "");
-            if (!"FCalendar".equals(type)) {
+            RemoteCalendar rc = folderToRemoteCalendar(folder, isPublic, isShared, forcedOwnerName, forcedOwnerEmail);
+            if (rc == null || rc.id == null || rc.id.isEmpty()) {
                 continue;
             }
 
-            RemoteCalendar rc = new RemoteCalendar();
-
-            rc.id = folder.optString("id", null);
-            if (rc.id == null || rc.id.isEmpty()) {
-                continue;
+            RemoteCalendar existing = byId.get(rc.id);
+            if (existing == null) {
+                byId.put(rc.id, rc);
+            } else {
+                mergeCalendar(existing, rc);
             }
+        }
+    }
 
-            rc.name = folder.optString("name", rc.id);
+    private void addCalendarsFromSharedMailboxListResult(JSONObject resp,
+                                                         Map<String, RemoteCalendar> byId,
+                                                         List<String> subscribedFolderIds) throws JSONException {
 
-            String ownerFromFolder = folder.optString("ownerName",
-                    folder.optString("owner", ""));
-            if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
-                ownerFromFolder = mUsername;
-            }
-            rc.owner = ownerFromFolder;
-
-            boolean readOnly = false;
-            JSONObject rights = folder.optJSONObject("rights");
-            if (rights != null) {
-                boolean canModify = rights.optBoolean("modify", false)
-                        || rights.optBoolean("modifyItems", false)
-                        || rights.optBoolean("full", false)
-                        || rights.optBoolean("owner", false);
-
-                readOnly = !canModify;
-            }
-            rc.readOnly = readOnly;
-
-            rc.color = folder.optString("color", null);
-
-            calendars.add(rc);
+        if (resp == null || !resp.has("result")) {
+            return;
         }
 
-        return calendars;
+        JSONObject result = resp.getJSONObject("result");
+
+        // Kerio-Versionen variieren: "mailboxes" oder "list"
+        JSONArray mailboxes = result.optJSONArray("mailboxes");
+        if (mailboxes == null) {
+            mailboxes = result.optJSONArray("list");
+        }
+        if (mailboxes == null) {
+            return;
+        }
+
+        for (int i = 0; i < mailboxes.length(); i++) {
+            JSONObject mb = mailboxes.optJSONObject(i);
+            if (mb == null) {
+                continue;
+            }
+
+            String mailboxOwnerName = null;
+            String mailboxOwnerEmail = null;
+
+            JSONObject principal = mb.optJSONObject("principal");
+            if (principal != null) {
+                mailboxOwnerName = principal.optString("name", null);
+                mailboxOwnerEmail = principal.optString("emailAddress", null);
+                if (mailboxOwnerEmail == null || mailboxOwnerEmail.isEmpty()) {
+                    mailboxOwnerEmail = principal.optString("email", null);
+                }
+            }
+
+            JSONArray folders = mb.optJSONArray("folders");
+            if (folders == null) {
+                continue;
+            }
+
+            for (int f = 0; f < folders.length(); f++) {
+                JSONObject folder = folders.optJSONObject(f);
+                if (folder == null) {
+                    continue;
+                }
+
+                RemoteCalendar rc = folderToRemoteCalendar(folder, false, true, mailboxOwnerName, mailboxOwnerEmail);
+                if (rc == null || rc.id == null || rc.id.isEmpty()) {
+                    continue;
+                }
+
+                // Optional: Wenn subscribedFolderIds verfügbar ist, übernehmen wir bevorzugt nur die eingeblendeten.
+                if (subscribedFolderIds != null && !subscribedFolderIds.isEmpty()) {
+                    boolean checked = folder.optBoolean("checked", false);
+                    boolean subscribed = subscribedFolderIds.contains(rc.id);
+                    if (!checked && !subscribed) {
+                        continue;
+                    }
+                }
+
+                RemoteCalendar existing = byId.get(rc.id);
+                if (existing == null) {
+                    byId.put(rc.id, rc);
+                } else {
+                    mergeCalendar(existing, rc);
+                }
+            }
+        }
     }
+
+    private List<String> extractSubscribedFolderIds(JSONObject resp) throws JSONException {
+        List<String> ids = new ArrayList<>();
+
+        if (resp == null || !resp.has("result")) {
+            return ids;
+        }
+
+        JSONObject result = resp.getJSONObject("result");
+
+        // Erwartung (je nach Version): result.list[].subscribedFolderIds[]
+        JSONArray list = result.optJSONArray("list");
+        if (list == null) {
+            list = result.optJSONArray("mailboxes");
+        }
+        if (list == null) {
+            return ids;
+        }
+
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject mb = list.optJSONObject(i);
+            if (mb == null) {
+                continue;
+            }
+
+            JSONArray subscribed = mb.optJSONArray("subscribedFolderIds");
+            if (subscribed == null) {
+                continue;
+            }
+
+            for (int s = 0; s < subscribed.length(); s++) {
+                String id = subscribed.optString(s, null);
+                if (id != null && !id.isEmpty() && !ids.contains(id)) {
+                    ids.add(id);
+                }
+            }
+        }
+
+        return ids;
+    }
+
+    private RemoteCalendar folderToRemoteCalendar(JSONObject folder,
+                                                  boolean isPublic,
+                                                  boolean isShared,
+                                                  String forcedOwnerName,
+                                                  String forcedOwnerEmail) {
+
+        if (folder == null) {
+            return null;
+        }
+
+        String type = folder.optString("type", "");
+        if (!"FCalendar".equals(type)) {
+            return null;
+        }
+
+        RemoteCalendar rc = new RemoteCalendar();
+
+        rc.id = folder.optString("id", null);
+        if (rc.id == null || rc.id.isEmpty()) {
+            return null;
+        }
+
+        rc.name = folder.optString("name", rc.id);
+
+        rc.placeType = folder.optString("placeType", null);
+        rc.isPublic = isPublic || "FPlacePublic".equals(rc.placeType);
+        rc.isShared = isShared || "FPlacePeople".equals(rc.placeType);
+        rc.isDelegated = folder.optBoolean("isDelegated", false);
+
+        String ownerFromFolder = folder.optString("ownerName",
+                folder.optString("owner", ""));
+        if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
+            ownerFromFolder = forcedOwnerName;
+        }
+        if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
+            ownerFromFolder = mUsername;
+        }
+        rc.owner = ownerFromFolder;
+
+        String ownerEmail = folder.optString("emailAddress", null);
+        if (ownerEmail == null || ownerEmail.isEmpty()) {
+            ownerEmail = forcedOwnerEmail;
+        }
+        rc.ownerEmail = ownerEmail;
+
+        boolean readOnly = false;
+        JSONObject rights = folder.optJSONObject("rights");
+        if (rights != null) {
+            boolean canModify = rights.optBoolean("modify", false)
+                    || rights.optBoolean("modifyItems", false)
+                    || rights.optBoolean("full", false)
+                    || rights.optBoolean("owner", false);
+
+            readOnly = !canModify;
+        }
+        rc.readOnly = readOnly;
+
+        rc.color = folder.optString("color", null);
+
+        // DisplayName: Shared/Public in Android besser erkennbar machen
+        if (rc.isPublic) {
+            rc.displayName = "Public: " + rc.name;
+        } else if (rc.isShared || rc.isDelegated) {
+            rc.displayName = rc.owner + ": " + rc.name;
+        } else {
+            rc.displayName = rc.name;
+        }
+
+        return rc;
+    }
+
+    private void mergeCalendar(RemoteCalendar base, RemoteCalendar incoming) {
+        if (base == null || incoming == null) {
+            return;
+        }
+
+        if ((base.name == null || base.name.isEmpty()) && incoming.name != null) {
+            base.name = incoming.name;
+        }
+        if ((base.displayName == null || base.displayName.isEmpty()) && incoming.displayName != null) {
+            base.displayName = incoming.displayName;
+        }
+        if ((base.owner == null || base.owner.isEmpty()) && incoming.owner != null) {
+            base.owner = incoming.owner;
+        }
+        if ((base.ownerEmail == null || base.ownerEmail.isEmpty()) && incoming.ownerEmail != null) {
+            base.ownerEmail = incoming.ownerEmail;
+        }
+        if ((base.placeType == null || base.placeType.isEmpty()) && incoming.placeType != null) {
+            base.placeType = incoming.placeType;
+        }
+
+        base.isPublic = base.isPublic || incoming.isPublic;
+        base.isShared = base.isShared || incoming.isShared;
+        base.isDelegated = base.isDelegated || incoming.isDelegated;
+
+        // Wenn irgendeine Quelle Schreibrechte meldet, ist es nicht readOnly.
+        base.readOnly = base.readOnly && incoming.readOnly;
+
+        if ((base.color == null || base.color.isEmpty()) && incoming.color != null) {
+            base.color = incoming.color;
+        }
+    }
+
 
     private void parseEventsResponse(JSONObject response,
             RemoteCalendar calendar,
@@ -1289,3 +1550,4 @@ public class KerioApiClient {
         return inclusiveEndDate.format(KERIO_DATE_ONLY_FORMAT);
     }
 }
+
