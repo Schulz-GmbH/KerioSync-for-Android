@@ -28,7 +28,7 @@ jobs:
 
             - name: Build Doxygen
               run: |
-                  doxygen docs/Doxyfile
+                  doxygen docs/doxygen/Doxyfile
 
             - name: Upload Pages artifact
               uses: actions/upload-pages-artifact@v3
