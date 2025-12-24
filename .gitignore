@@ -1,15 +1,29 @@
+# =========================
 # OS
+# =========================
 .DS_Store
 Thumbs.db
 *diff.txt
-# IDE
+
+# =========================
+# IDEs
+# =========================
 .idea/
 *.iml
+.vscode/
+*.swp
+*.swo
 
+# =========================
 # Gradle (nur Caches)
+# =========================
 .gradle/
+.gradle-cache/
+**/.gradle/
 
-# Build-Ausgaben
+# =========================
+# Android Build-Ausgaben
+# =========================
 **/build/
 **/.cxx/
 **/.externalNativeBuild/
@@ -18,31 +32,70 @@ bin/
 gen/
 out/
 
-# Android-Artefakte
+# =========================
+# Android Artefakte
+# =========================
 *.apk
 *.aab
 *.ap_
 *.dex
 *.class
 
+# =========================
 # Lokale Konfiguration
+# =========================
 local.properties
 
-# ProGuard (legacy)
+# =========================
+# ProGuard / R8
+# =========================
 proguard/
+mapping.txt
+seeds.txt
+usage.txt
 
+# =========================
 # Logs
+# =========================
 *.log
+logcat.txt
 
+# =========================
 # Keystore & Signing (niemals committen)
+# =========================
 *.jks
 *.keystore
 keystore.properties
 signing.properties
 /keystores/
 
+# =========================
 # NDK (optional)
+# =========================
 ndkBuild/
+.cxx/
 
-#other
-*source-code.txt
+# =========================
+# Doxygen (wichtig!)
+# =========================
+
+# Generierte HTML-/LaTeX-Dokumentation NICHT committen
+docs/doxygen/html/
+docs/doxygen/latex/
+
+# Temporäre Doxygen-Dateien
+doxygen_sqlite3.db
+doxygen_warnings.txt
+
+# =========================
+# macOS / Sonstiges
+# =========================
+*.orig
+*.bak
+*.tmp
+*.swp
+
+# =========================
+# Projekt-spezifisch
+# =========================
+*source-code*.txt
