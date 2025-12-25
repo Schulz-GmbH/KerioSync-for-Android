@@ -25,6 +25,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.KerioSync">
 
+        <meta-data
+            android:name="android.provider.CONTACTS_STRUCTURE"
+            android:resource="@xml/contacts" />
+
         <!-- AccountAuthenticator Service -->
         <service
             android:name=".auth.KerioAuthenticatorService"
@@ -63,7 +67,6 @@
                 android:name="android.content.SyncAdapter"
                 android:resource="@xml/sync_contacts" />
         </service>
-
         <!-- JobService: lauscht auf CalendarProvider Änderungen (Instant Sync bei lokalen Änderungen) -->
         <service
             android:name=".sync.KerioCalendarChangeJobService"

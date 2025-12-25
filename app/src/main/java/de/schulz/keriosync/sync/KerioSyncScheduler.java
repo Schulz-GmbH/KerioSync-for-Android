@@ -106,7 +106,6 @@ public final class KerioSyncScheduler {
             // Kontakte (damit Contacts-App den Account als Quelle anbietet)
             ContentResolver.setIsSyncable(account, CONTACTS_AUTHORITY, 1);
             ContentResolver.setSyncAutomatically(account, CONTACTS_AUTHORITY, true);
-
             Log.i(TAG, "ensureSyncableAndAuto(): OK für " + account.name);
         } catch (SecurityException se) {
             // Auf normalen Geräten/Samsung meist nicht erlaubt -> ok, WorkManager übernimmt

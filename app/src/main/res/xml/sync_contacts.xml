@@ -3,6 +3,6 @@
     android:accountType="de.schulz.keriosync.account"
     android:contentAuthority="com.android.contacts"
     android:userVisible="true"
-    android:supportsUploading="false"
+    android:supportsUploading="true"
     android:isAlwaysSyncable="true"
     android:allowParallelSyncs="false" />
