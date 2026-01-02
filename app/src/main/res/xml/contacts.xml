@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Contacts Structure für OEM Kontakte-Apps (z.B. Samsung OneUI).
+
+    Hintergrund:
+    Einige Hersteller verwenden zusätzlich zu RawContacts/Settings auch diese
+    Struktur-Definition, um einen Account-Typ als "vollwertige Kontaktquelle"
+    (inkl. Filter/Anzeige) zu behandeln.
+
+    Wir liefern eine minimal-kompatible Definition der wichtigsten DataKinds.
+-->
+<ContactsSource xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Anzeige-Name (StructuredName) -->
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/name"
+        android:summaryColumn="data1"
+        android:detailColumn="data1" />
+
+    <!-- Telefonnummer -->
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/phone_v2"
+        android:summaryColumn="data1"
+        android:detailColumn="data1" />
+
+    <!-- E-Mail -->
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/email_v2"
+        android:summaryColumn="data1"
+        android:detailColumn="data1" />
+
+</ContactsSource>

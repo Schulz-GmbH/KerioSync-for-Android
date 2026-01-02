@@ -1,29 +1,218 @@
+// ===== app/build.gradle =====
+
+import java.util.Properties
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+
 plugins {
     alias(libs.plugins.android.application)
 }
 
+// ======================================================================
+// Laden der local.properties (für KERIO_DEV_... Variablen)
+// ======================================================================
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localProps.load(new FileInputStream(localPropsFile))
+}
+
+
+// ======================================================================
+// Automatische Versionierung
+// Schema für versionCode:
+//   - yyMMdd * 100 + XX   (z.B. 25111703)
+//   - daraus wird im Code der Build-String YYYYMMDD.XX berechnet
+//     (z.B. 20251117.03)
+//
+//   yyMMdd   -> Datum
+//   XX       -> Tageszähler (1..99), jeden Tag wieder ab 1
+//
+// Semantische Version (versionName) bleibt manuell in version.properties
+// ======================================================================
+
+def versionPropsFile = rootProject.file("version.properties")
+def versionProps = new Properties()
+
+if (versionPropsFile.exists()) {
+    versionProps.load(new FileInputStream(versionPropsFile))
+} else {
+    versionProps['LAST_DATE']     = '0'
+    versionProps['DAILY_BUILD']   = '0'
+    versionProps['VERSION_CODE']  = '0'
+    versionProps['BUILD_NAME']    = ''
+    versionProps['VERSION_NAME']  = '0.0.0'
+}
+
+// Heutiges Datum bestimmen
+def today = LocalDate.now()
+def dateFormatter6 = DateTimeFormatter.ofPattern("yyMMdd")    // z.B. "251117"
+def dateFormatter8 = DateTimeFormatter.ofPattern("yyyyMMdd")  // z.B. "20251117"
+
+def date6 = today.format(dateFormatter6)
+def date8 = today.format(dateFormatter8)
+
+def lastDate   = versionProps.getProperty('LAST_DATE', '0')
+def dailyBuild = (versionProps.getProperty('DAILY_BUILD', '0') ?: '0') as int
+
+// Tageszähler setzen/erhöhen
+if (lastDate != date6) {
+    dailyBuild = 1
+} else {
+    dailyBuild++
+}
+
+// Optional: Begrenzung auf 99 Builds pro Tag
+if (dailyBuild > 99) {
+    throw new GradleException("Tages-Build-Zähler hat 99 überschritten. Bitte Schema anpassen.")
+}
+
+// Semantische Version aus version.properties
+def semanticVersion = versionProps.getProperty('VERSION_NAME', '0.0.0').toString()
+
+// versionCode berechnen (passt sicher in signed 32-bit int)
+def versionCodeCalculated = (date6 as int) * 100 + dailyBuild
+
+// Build-String im Format YYYYMMDD.XX (z.B. 20251117.03)
+def buildNameCalculated = String.format("%s.%02d", date8, dailyBuild)
+
+// Properties aktualisieren und zurückschreiben
+versionProps['LAST_DATE']    = date6
+versionProps['DAILY_BUILD']  = dailyBuild.toString()
+versionProps['VERSION_CODE'] = versionCodeCalculated.toString()
+versionProps['BUILD_NAME']   = buildNameCalculated
+// VERSION_NAME bleibt unverändert (manuell pflegen)
+
+versionProps.store(new FileOutputStream(versionPropsFile), "Automatic versioning - do not edit manually")
+
+// ======================================================================
+// Signing (Release) via keystore.properties (nicht committen)
+// ======================================================================
+
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+def hasKeystoreProps = keystorePropsFile.exists()
+if (hasKeystoreProps) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
+// ======================================================================
+// Android-Konfiguration
+// ======================================================================
+
 android {
     namespace 'de.schulz.keriosync'
-    compileSdk {
-        version = release(36)
+
+    buildFeatures {
+        buildConfig true
     }
 
+    // Du nutzt aktuell compileSdk/targetSdk 36 und minSdk 26 :contentReference[oaicite:5]{index=5}
+    compileSdk 36
+
     defaultConfig {
-        applicationId "de.schulz.keriosync"
+        // applicationId kommt pro Flavor (siehe productFlavors)
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName "1.0"
+
+        // >>> Automatisch berechnete Version <<<
+        versionCode versionCodeCalculated
+        versionName semanticVersion
+        // <<< Ende >>>
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // BuildName (YYYYMMDD.XX) für About-/Logs etc.
+        buildConfigField "String", "BUILD_NAME", "\"${buildNameCalculated}\""
+    }
+
+    // ------------------------------------------------------------------
+    // Flavors: Prod + Dev
+    // - Prod: kein Launcher/Icon
+    // - Dev: Launcher/Icon (DebugLauncherActivity)
+    //
+    // Zusätzlich: eigener AccountType je Flavor (wichtig!)
+    // ------------------------------------------------------------------
+    flavorDimensions "distribution"
+
+    productFlavors {
+        prod {
+            dimension "distribution"
+            applicationId "de.schulz.keriosync"
+            resValue "string", "app_name", "Kerio Sync"
+
+            // Dev-Preset Werte deaktivieren
+            buildConfigField "boolean", "DEV_PRESET_VALUES", "false"
+            buildConfigField "String", "DEV_SERVER_URL", "\"\""
+            buildConfigField "String", "DEV_USERNAME", "\"\""
+            buildConfigField "String", "DEV_PASSWORD", "\"\""
+
+            // AccountType für Prod
+            buildConfigField "String", "KERIO_ACCOUNT_TYPE", "\"de.schulz.keriosync.account\""
+        }
+
+        dev {
+            dimension "distribution"
+            applicationId "de.schulz.keriosync.dev"
+            // versionNameSuffix "-dev"
+            resValue "string", "app_name", "Kerio Sync (Dev)"
+
+            // Dev-Preset Werte aus local.properties (wenn vorhanden)
+            buildConfigField "boolean", "DEV_PRESET_VALUES", "true"
+
+            buildConfigField "String", "DEV_SERVER_URL", "\"${localProps.getProperty("KERIO_DEV_SERVER_URL", "")}\""
+            buildConfigField "String", "DEV_USERNAME", "\"${localProps.getProperty("KERIO_DEV_USERNAME", "")}\""
+            buildConfigField "String", "DEV_PASSWORD", "\"${localProps.getProperty("KERIO_DEV_PASSWORD", "")}\""
+
+            // Eigener AccountType für Dev (damit parallel installierbar)
+            buildConfigField "String", "KERIO_ACCOUNT_TYPE", "\"de.schulz.keriosync.dev.account\""
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasKeystoreProps) {
+                storeFile file(keystoreProps['RELEASE_STORE_FILE'])
+                storePassword keystoreProps['RELEASE_STORE_PASSWORD']
+                keyAlias keystoreProps['RELEASE_KEY_ALIAS']
+                keyPassword keystoreProps['RELEASE_KEY_PASSWORD']
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Signing nur anwenden wenn vorhanden (sonst "assembleRelease" knallt)
+            if (hasKeystoreProps) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        debug {
+            // debug bleibt signiert mit debug keystore
+        }
     }
+
+    // APK-Dateiname: KerioSync-0.9.7-20260102.01.apk etc.
+    // APK-Dateiname: KerioSync-dev-0.9.7-20260102.01.apk etc.
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def vName = variant.versionName                 // z.B. "0.9.7" oder "0.9.7-dev"
+            def buildName = buildNameCalculated             // z.B. "20260102.01"
+            def flavorName = variant.flavorName             // prod / dev
+            def buildTypeName = variant.buildType.name      // debug / release
+
+            // Sonderfall: prodRelease -> kurzer Dateiname
+            if (flavorName == "prod" && buildTypeName == "release") {
+                outputFileName = "KerioSync-${vName}-${buildName}.apk"
+            } else {
+                // Standard: alles andere wie bisher
+                outputFileName = "KerioSync-${flavorName}-${vName}-${buildName}-${buildTypeName}.apk"
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11

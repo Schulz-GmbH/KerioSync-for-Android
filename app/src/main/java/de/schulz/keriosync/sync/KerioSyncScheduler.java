@@ -28,13 +28,17 @@ import de.schulz.keriosync.auth.KerioAccountConstants;
  * - robust über WorkManager (ohne WRITE_SYNC_SETTINGS)
  *
  * Instant Sync:
- * - JobScheduler TriggerContentUri (nicht persisted!), Reschedule über BootReceiver
+ * - JobScheduler TriggerContentUri (nicht persisted!), Reschedule über
+ * BootReceiver
  */
 public final class KerioSyncScheduler {
 
     private static final String TAG = "KerioSyncScheduler";
 
     public static final String CALENDAR_AUTHORITY = "com.android.calendar";
+
+    /** Contacts Provider Authority */
+    public static final String CONTACTS_AUTHORITY = "com.android.contacts";
 
     /** Android-/WorkManager-Minimum für Periodic */
     public static final int MIN_PERIODIC_MINUTES = 15;
@@ -52,7 +56,8 @@ public final class KerioSyncScheduler {
     public static final String WM_KEY_ACCOUNT_NAME = "wm_account_name";
     public static final String WM_KEY_ACCOUNT_TYPE = "wm_account_type";
 
-    private KerioSyncScheduler() {}
+    private KerioSyncScheduler() {
+    }
 
     // ---------------------------------------------------------------------
     // Öffentlicher Einstiegspunkt
@@ -94,8 +99,13 @@ public final class KerioSyncScheduler {
 
     private static void ensureSyncableAndAutoBestEffort(Account account) {
         try {
+            // Kalender
             ContentResolver.setIsSyncable(account, CALENDAR_AUTHORITY, 1);
             ContentResolver.setSyncAutomatically(account, CALENDAR_AUTHORITY, true);
+
+            // Kontakte (damit Contacts-App den Account als Quelle anbietet)
+            ContentResolver.setIsSyncable(account, CONTACTS_AUTHORITY, 1);
+            ContentResolver.setSyncAutomatically(account, CONTACTS_AUTHORITY, true);
             Log.i(TAG, "ensureSyncableAndAuto(): OK für " + account.name);
         } catch (SecurityException se) {
             // Auf normalen Geräten/Samsung meist nicht erlaubt -> ok, WorkManager übernimmt
@@ -149,18 +159,17 @@ public final class KerioSyncScheduler {
 
         PeriodicWorkRequest req = new PeriodicWorkRequest.Builder(
                 KerioPeriodicPullWorker.class,
-                minutes, TimeUnit.MINUTES
-        )
+                minutes, TimeUnit.MINUTES)
                 .setConstraints(constraints)
                 .setInputData(input)
                 .build();
 
-        // UPDATE/REPLACE: ich nehme UPDATE, damit vorhandene Worker sauber aktualisiert werden
+        // UPDATE/REPLACE: ich nehme UPDATE, damit vorhandene Worker sauber aktualisiert
+        // werden
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 workName,
                 ExistingPeriodicWorkPolicy.UPDATE,
-                req
-        );
+                req);
 
         Log.i(TAG, "applyPeriodicWork(): WorkManager periodic gesetzt auf " + minutes + " Minuten, name=" + workName);
 
