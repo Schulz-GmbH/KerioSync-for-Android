@@ -1,5 +1,7 @@
 package de.schulz.keriosync.auth;
 
+import de.schulz.keriosync.BuildConfig;
+
 /**
  * Zentrale Konstanteinstellungen für den Kerio-Sync-Account.
  *
@@ -16,8 +18,13 @@ public final class KerioAccountConstants {
     // Account / Authority
     // ---------------------------------------------------------------------
 
-    /** Account-Type (muss zu authenticator.xml / sync_calendars.xml passen) */
-    public static final String ACCOUNT_TYPE = "de.schulz.keriosync.account";
+    /**
+     * Account-Type (muss zu authenticator.xml / sync_calendars.xml passen)
+     *
+     * Wichtig:
+     * - Wird pro Flavor gesetzt (enduser/devteam) via BuildConfigField.
+     */
+    public static final String ACCOUNT_TYPE = BuildConfig.KERIO_ACCOUNT_TYPE;
 
     /** Calendar Provider Authority */
     public static final String CALENDAR_AUTHORITY = "com.android.calendar";
@@ -72,7 +79,8 @@ public final class KerioAccountConstants {
     public static final String PREFS_NAME = "keriosync_prefs";
 
     /**
-     * Wenn true: Änderungen unter CalendarContract.Events triggern automatisch requestSync(...)
+     * Wenn true: Änderungen unter CalendarContract.Events triggern automatisch
+     * requestSync(...)
      */
     public static final String PREF_IMMEDIATE_SYNC_ENABLED = "pref_immediate_sync_enabled";
 

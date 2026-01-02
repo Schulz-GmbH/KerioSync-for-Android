@@ -224,7 +224,10 @@ public class KerioApiClient {
         public String id;
         public String name;
 
-        /** Optional: Name, der in Android als Kalender-DisplayName genutzt werden kann (z.B. "Public: Team", "Max: Urlaub"). */
+        /**
+         * Optional: Name, der in Android als Kalender-DisplayName genutzt werden kann
+         * (z.B. "Public: Team", "Max: Urlaub").
+         */
         public String displayName;
 
         /** Owner (bei Shared/Delegation häufig der Postfach-/Benutzername). */
@@ -233,7 +236,10 @@ public class KerioApiClient {
         /** Owner-E-Mail, falls vom Server geliefert. */
         public String ownerEmail;
 
-        /** placeType laut Kerio (z.B. FPlaceMailbox, FPlacePeople, FPlacePublic, FPlaceResources, ...). */
+        /**
+         * placeType laut Kerio (z.B. FPlaceMailbox, FPlacePeople, FPlacePublic,
+         * FPlaceResources, ...).
+         */
         public String placeType;
 
         /** True, wenn dieser Kalender aus Public Folders stammt. */
@@ -320,13 +326,15 @@ public class KerioApiClient {
     public List<RemoteCalendar> fetchCalendars() throws IOException, JSONException {
         ensureLoggedIn();
 
-        // Feature: Zusätzlich zu den eigenen Kalendern werden auch Public sowie Shared/Delegated Kalender
+        // Feature: Zusätzlich zu den eigenen Kalendern werden auch Public sowie
+        // Shared/Delegated Kalender
         // eingebunden (soweit die Server-Version die Methoden bereitstellt).
         //
         // 1) Eigene Kalender: Folders.get
         // 2) Public Kalender: Folders.getPublic (optional)
         // 3) Shared/Delegated: Folders.getSharedMailboxList (optional)
-        //    Optional Filter: Folders.getSubscribed (wenn vorhanden), um nur "eingeblendete" Kalender zu übernehmen.
+        // Optional Filter: Folders.getSubscribed (wenn vorhanden), um nur
+        // "eingeblendete" Kalender zu übernehmen.
 
         Map<String, RemoteCalendar> byId = new HashMap<>();
 
@@ -363,11 +371,11 @@ public class KerioApiClient {
     }
 
     private void addCalendarsFromFolderResult(JSONObject resp,
-                                              Map<String, RemoteCalendar> byId,
-                                              boolean isPublic,
-                                              boolean isShared,
-                                              String forcedOwnerName,
-                                              String forcedOwnerEmail) throws JSONException {
+            Map<String, RemoteCalendar> byId,
+            boolean isPublic,
+            boolean isShared,
+            String forcedOwnerName,
+            String forcedOwnerEmail) throws JSONException {
 
         if (resp == null || !resp.has("result")) {
             return;
@@ -400,8 +408,8 @@ public class KerioApiClient {
     }
 
     private void addCalendarsFromSharedMailboxListResult(JSONObject resp,
-                                                         Map<String, RemoteCalendar> byId,
-                                                         List<String> subscribedFolderIds) throws JSONException {
+            Map<String, RemoteCalendar> byId,
+            List<String> subscribedFolderIds) throws JSONException {
 
         if (resp == null || !resp.has("result")) {
             return;
@@ -452,7 +460,8 @@ public class KerioApiClient {
                     continue;
                 }
 
-                // Optional: Wenn subscribedFolderIds verfügbar ist, übernehmen wir bevorzugt nur die eingeblendeten.
+                // Optional: Wenn subscribedFolderIds verfügbar ist, übernehmen wir bevorzugt
+                // nur die eingeblendeten.
                 if (subscribedFolderIds != null && !subscribedFolderIds.isEmpty()) {
                     boolean checked = folder.optBoolean("checked", false);
                     boolean subscribed = subscribedFolderIds.contains(rc.id);
@@ -512,10 +521,10 @@ public class KerioApiClient {
     }
 
     private RemoteCalendar folderToRemoteCalendar(JSONObject folder,
-                                                  boolean isPublic,
-                                                  boolean isShared,
-                                                  String forcedOwnerName,
-                                                  String forcedOwnerEmail) {
+            boolean isPublic,
+            boolean isShared,
+            String forcedOwnerName,
+            String forcedOwnerEmail) {
 
         if (folder == null) {
             return null;
@@ -614,7 +623,6 @@ public class KerioApiClient {
             base.color = incoming.color;
         }
     }
-
 
     private void parseEventsResponse(JSONObject response,
             RemoteCalendar calendar,
@@ -1557,4 +1565,491 @@ public class KerioApiClient {
 
         return inclusiveEndDate.format(KERIO_DATE_ONLY_FORMAT);
     }
+
+    // ---------------------------------------------------------------------
+    // Kontakte: Server -> Client (Personal + Shared)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Einfaches Kontaktmodell für die Kontakt-Synchronisation (Server -> Client).
+     *
+     * Wichtig:
+     * - id kann in unterschiedlichen Adressbüchern (folderId) vorkommen, daher ist
+     * die Kombination folderId:id als eindeutiger Schlüssel zu betrachten.
+     */
+    public static class RemoteContact {
+        /** Kontakt-ID */
+        public String id;
+
+        /** Adressbuch/Folder-ID */
+        public String folderId;
+
+        /** Anzeigename des Adressbuchs (sofern verfügbar) */
+        public String folderName;
+
+        /** optional: Watermark/ETag (wenn Kerio liefert) */
+        public String watermark;
+
+        public String commonName;
+        public String firstName;
+        public String middleName;
+        public String surName;
+        public String nickName;
+
+        public final java.util.List<String> emails = new java.util.ArrayList<>();
+        public final java.util.List<String> phones = new java.util.ArrayList<>();
+    }
+
+    /**
+     * Repräsentiert ein Kerio-Kontakt-Adressbuch (Folder).
+     *
+     * Wird für Android-Gruppen (ContactsContract.Groups) genutzt, damit
+     * die Kontakt-App den Kontotyp + "Gruppen/Ordner" korrekt anbieten kann.
+     */
+    public static class RemoteContactFolder {
+        /** Folder-ID des Adressbuchs */
+        public String id;
+
+        /** Ordnername laut Kerio */
+        public String name;
+
+        /** Optionaler DisplayName, den wir für Android "Gruppen" verwenden */
+        public String displayName;
+
+        /** True, wenn Folder aus Public stammt */
+        public boolean isPublic;
+
+        /** True, wenn Folder aus Shared/Delegated stammt */
+        public boolean isShared;
+
+        /** Owner/Benutzername (bei Shared/Delegated) */
+        public String owner;
+
+        /** Owner-E-Mail (wenn geliefert) */
+        public String ownerEmail;
+
+        @Override
+        public String toString() {
+            return "RemoteContactFolder{" +
+                    "id='" + id + '\'' +
+                    ", name='" + name + '\'' +
+                    ", displayName='" + displayName + '\'' +
+                    ", isPublic=" + isPublic +
+                    ", isShared=" + isShared +
+                    ", owner='" + owner + '\'' +
+                    ", ownerEmail='" + ownerEmail + '\'' +
+                    '}';
+        }
+    }
+
+    /**
+     * Liefert alle Kontakt-Ordner (Adressbücher) inkl. Public + Shared (wenn vom
+     * Server unterstützt).
+     *
+     * Wichtig:
+     * - Kerio-Versionen variieren stark: manche liefern Kontakt-Ordner in
+     * Folders.get,
+     * andere nur über SharedMailboxList/Public.
+     * - Wir versuchen daher "best effort": Fehler einzelner Calls sind nicht fatal.
+     */
+    public java.util.List<RemoteContactFolder> fetchContactFolders()
+            throws java.io.IOException, org.json.JSONException {
+
+        ensureLoggedIn();
+
+        java.util.Map<String, RemoteContactFolder> byId = new java.util.HashMap<>();
+
+        // (1) Eigene Folder
+        try {
+            org.json.JSONObject params = new org.json.JSONObject();
+            params.put("token", mToken);
+            org.json.JSONObject resp = call("Folders.get", params, true);
+            addContactFoldersFromFolderResult(resp, byId, false, false, null, null);
+        } catch (Exception e) {
+            android.util.Log.i(TAG, "fetchContactFolders(): Folders.get fehlgeschlagen: " + e.getMessage());
+        }
+
+        // (2) Public Folder (optional)
+        try {
+            org.json.JSONObject params = new org.json.JSONObject();
+            params.put("token", mToken);
+            org.json.JSONObject resp = call("Folders.getPublic", params, true);
+            addContactFoldersFromFolderResult(resp, byId, true, false, null, null);
+        } catch (Exception e) {
+            android.util.Log.i(TAG,
+                    "fetchContactFolders(): Folders.getPublic nicht verfügbar/fehlgeschlagen: " + e.getMessage());
+        }
+
+        // (3) Shared Mailboxes (optional)
+        try {
+            org.json.JSONObject params = new org.json.JSONObject();
+            params.put("token", mToken);
+            org.json.JSONObject resp = call("Folders.getSharedMailboxList", params, true);
+            addContactFoldersFromSharedMailboxListResult(resp, byId);
+        } catch (Exception e) {
+            android.util.Log.i(TAG,
+                    "fetchContactFolders(): Folders.getSharedMailboxList nicht verfügbar/fehlgeschlagen: "
+                            + e.getMessage());
+        }
+
+        return new java.util.ArrayList<>(byId.values());
+    }
+
+    private void addContactFoldersFromFolderResult(org.json.JSONObject resp,
+            java.util.Map<String, RemoteContactFolder> byId,
+            boolean isPublic,
+            boolean isShared,
+            String forcedOwnerName,
+            String forcedOwnerEmail) throws org.json.JSONException {
+
+        if (resp == null || !resp.has("result")) {
+            return;
+        }
+
+        org.json.JSONObject result = resp.getJSONObject("result");
+
+        // Kerio-Versionen variieren: result.list[] oder result.mailboxes[]
+        org.json.JSONArray list = result.optJSONArray("list");
+        if (list == null) {
+            list = result.optJSONArray("mailboxes");
+        }
+        if (list == null) {
+            return;
+        }
+
+        for (int i = 0; i < list.length(); i++) {
+            org.json.JSONObject mb = list.optJSONObject(i);
+            if (mb == null) {
+                continue;
+            }
+
+            // Manche Kerio-Versionen liefern "folders" in mailbox-Objekten, manche direkt
+            // list[] = folders
+            org.json.JSONArray folders = mb.optJSONArray("folders");
+            if (folders == null) {
+                folders = mb.optJSONArray("list");
+            }
+            if (folders == null) {
+                // Falls list[] bereits Folder ist
+                if (mb.has("type") && mb.has("id")) {
+                    RemoteContactFolder f = folderToRemoteContactFolder(mb, isPublic, isShared, forcedOwnerName,
+                            forcedOwnerEmail);
+                    if (f != null && f.id != null && !f.id.isEmpty()) {
+                        RemoteContactFolder existing = byId.get(f.id);
+                        if (existing == null)
+                            byId.put(f.id, f);
+                    }
+                }
+                continue;
+            }
+
+            for (int f = 0; f < folders.length(); f++) {
+                org.json.JSONObject folder = folders.optJSONObject(f);
+                if (folder == null) {
+                    continue;
+                }
+
+                RemoteContactFolder cf = folderToRemoteContactFolder(folder, isPublic, isShared, forcedOwnerName,
+                        forcedOwnerEmail);
+                if (cf == null || cf.id == null || cf.id.isEmpty()) {
+                    continue;
+                }
+
+                RemoteContactFolder existing = byId.get(cf.id);
+                if (existing == null) {
+                    byId.put(cf.id, cf);
+                } else {
+                    // Merge: prefer gefüllte Felder
+                    if ((existing.name == null || existing.name.isEmpty()) && cf.name != null)
+                        existing.name = cf.name;
+                    if ((existing.displayName == null || existing.displayName.isEmpty()) && cf.displayName != null)
+                        existing.displayName = cf.displayName;
+                    existing.isPublic = existing.isPublic || cf.isPublic;
+                    existing.isShared = existing.isShared || cf.isShared;
+                    if ((existing.owner == null || existing.owner.isEmpty()) && cf.owner != null)
+                        existing.owner = cf.owner;
+                    if ((existing.ownerEmail == null || existing.ownerEmail.isEmpty()) && cf.ownerEmail != null)
+                        existing.ownerEmail = cf.ownerEmail;
+                }
+            }
+        }
+    }
+
+    private void addContactFoldersFromSharedMailboxListResult(org.json.JSONObject resp,
+            java.util.Map<String, RemoteContactFolder> byId) throws org.json.JSONException {
+
+        if (resp == null || !resp.has("result")) {
+            return;
+        }
+
+        org.json.JSONObject result = resp.getJSONObject("result");
+
+        // Kerio-Versionen variieren: "mailboxes" oder "list"
+        org.json.JSONArray mailboxes = result.optJSONArray("mailboxes");
+        if (mailboxes == null) {
+            mailboxes = result.optJSONArray("list");
+        }
+        if (mailboxes == null) {
+            return;
+        }
+
+        for (int i = 0; i < mailboxes.length(); i++) {
+            org.json.JSONObject mb = mailboxes.optJSONObject(i);
+            if (mb == null) {
+                continue;
+            }
+
+            String mailboxOwnerName = null;
+            String mailboxOwnerEmail = null;
+
+            org.json.JSONObject principal = mb.optJSONObject("principal");
+            if (principal != null) {
+                mailboxOwnerName = principal.optString("name", null);
+                mailboxOwnerEmail = principal.optString("emailAddress", null);
+                if (mailboxOwnerEmail == null || mailboxOwnerEmail.isEmpty()) {
+                    mailboxOwnerEmail = principal.optString("email", null);
+                }
+            }
+
+            org.json.JSONArray folders = mb.optJSONArray("folders");
+            if (folders == null) {
+                continue;
+            }
+
+            for (int f = 0; f < folders.length(); f++) {
+                org.json.JSONObject folder = folders.optJSONObject(f);
+                if (folder == null) {
+                    continue;
+                }
+
+                RemoteContactFolder cf = folderToRemoteContactFolder(folder, false, true, mailboxOwnerName,
+                        mailboxOwnerEmail);
+                if (cf == null || cf.id == null || cf.id.isEmpty()) {
+                    continue;
+                }
+
+                RemoteContactFolder existing = byId.get(cf.id);
+                if (existing == null) {
+                    byId.put(cf.id, cf);
+                } else {
+                    if ((existing.name == null || existing.name.isEmpty()) && cf.name != null)
+                        existing.name = cf.name;
+                    if ((existing.displayName == null || existing.displayName.isEmpty()) && cf.displayName != null)
+                        existing.displayName = cf.displayName;
+                    existing.isPublic = existing.isPublic || cf.isPublic;
+                    existing.isShared = existing.isShared || cf.isShared;
+                    if ((existing.owner == null || existing.owner.isEmpty()) && cf.owner != null)
+                        existing.owner = cf.owner;
+                    if ((existing.ownerEmail == null || existing.ownerEmail.isEmpty()) && cf.ownerEmail != null)
+                        existing.ownerEmail = cf.ownerEmail;
+                }
+            }
+        }
+    }
+
+    private RemoteContactFolder folderToRemoteContactFolder(org.json.JSONObject folder,
+            boolean isPublic,
+            boolean isShared,
+            String forcedOwnerName,
+            String forcedOwnerEmail) {
+
+        if (folder == null) {
+            return null;
+        }
+
+        String type = folder.optString("type", "");
+
+        // Kerio-Versionen variieren:
+        // - teils "contact", "contacts", "addressbook"
+        // - teils "FContact" / "FContacts" / "FAddressBook"
+        // - teils "FContactFolder"
+        boolean isContactFolder = "contact".equalsIgnoreCase(type)
+                || "contacts".equalsIgnoreCase(type)
+                || "addressbook".equalsIgnoreCase(type)
+                || "fcontact".equalsIgnoreCase(type)
+                || "fcontacts".equalsIgnoreCase(type)
+                || "faddressbook".equalsIgnoreCase(type)
+                || "fcontactfolder".equalsIgnoreCase(type)
+                || type.toLowerCase(java.util.Locale.ROOT).contains("contact");
+
+        if (!isContactFolder) {
+            return null;
+        }
+
+        RemoteContactFolder cf = new RemoteContactFolder();
+
+        cf.id = folder.optString("id", null);
+        if (cf.id == null || cf.id.isEmpty()) {
+            return null;
+        }
+
+        cf.name = folder.optString("name", cf.id);
+        cf.isPublic = isPublic;
+        cf.isShared = isShared;
+
+        String ownerFromFolder = folder.optString("ownerName",
+                folder.optString("owner", ""));
+        if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
+            ownerFromFolder = forcedOwnerName;
+        }
+        if (ownerFromFolder == null || ownerFromFolder.isEmpty()) {
+            ownerFromFolder = mUsername;
+        }
+        cf.owner = ownerFromFolder;
+
+        String ownerEmail = folder.optString("emailAddress", null);
+        if (ownerEmail == null || ownerEmail.isEmpty()) {
+            ownerEmail = forcedOwnerEmail;
+        }
+        cf.ownerEmail = ownerEmail;
+
+        // DisplayName: Shared/Public in Android besser erkennbar machen
+        if (cf.isPublic) {
+            cf.displayName = "Public: " + cf.name;
+        } else if (cf.isShared) {
+            cf.displayName = cf.owner + ": " + cf.name;
+        } else {
+            cf.displayName = cf.name;
+        }
+
+        return cf;
+    }
+
+    /**
+     * Lädt Kontakte aus Kerio.
+     *
+     * @param folderIds Optional. Wenn null/leer, werden Kontakt-Ordner via
+     *                  Folders.get/Public/SharedMailboxList automatisch ermittelt.
+     */
+    public java.util.List<RemoteContact> fetchContacts(java.util.List<String> folderIds)
+            throws java.io.IOException, org.json.JSONException {
+
+        ensureLoggedIn();
+
+        java.util.List<String> contactFolderIds = new java.util.ArrayList<>();
+        java.util.Map<String, String> folderNameById = new java.util.HashMap<>();
+
+        if (folderIds != null && !folderIds.isEmpty()) {
+            contactFolderIds.addAll(folderIds);
+        } else {
+            // Kontakt-Folder inkl. Shared/Public best-effort holen
+            java.util.List<RemoteContactFolder> folders = fetchContactFolders();
+            for (RemoteContactFolder f : folders) {
+                if (f == null || f.id == null || f.id.isEmpty())
+                    continue;
+                contactFolderIds.add(f.id);
+                // für Kontakte nutzen wir den DisplayName, damit Kontakte-App "Ordner"
+                // erkennbar darstellt
+                folderNameById.put(f.id, (f.displayName != null) ? f.displayName : f.name);
+            }
+        }
+
+        java.util.List<RemoteContact> out = new java.util.ArrayList<>();
+        if (contactFolderIds.isEmpty()) {
+            android.util.Log.w(TAG, "fetchContacts(): Keine Kontakt-Ordner gefunden.");
+            return out;
+        }
+
+        final int LIMIT = 200;
+        int start = 0;
+        long total = Long.MAX_VALUE;
+
+        while (start < total) {
+            org.json.JSONObject query = new org.json.JSONObject();
+            query.put("start", start);
+            query.put("limit", LIMIT);
+
+            org.json.JSONArray fields = new org.json.JSONArray();
+            fields.put("id");
+            fields.put("folderId");
+            fields.put("watermark");
+            fields.put("commonName");
+            fields.put("firstName");
+            fields.put("middleName");
+            fields.put("surName");
+            fields.put("nickName");
+            fields.put("emailAddresses");
+            fields.put("phoneNumbers");
+            query.put("fields", fields);
+
+            org.json.JSONObject params = new org.json.JSONObject();
+            params.put("token", mToken);
+            params.put("folderIds", new org.json.JSONArray(contactFolderIds));
+            params.put("query", query);
+
+            org.json.JSONObject response = call("Contacts.get", params, true);
+            org.json.JSONObject result = (response != null) ? response.optJSONObject("result") : null;
+            if (result == null) {
+                android.util.Log.w(TAG, "fetchContacts(): result == null");
+                break;
+            }
+
+            total = result.optLong("totalItems", 0);
+            org.json.JSONArray list = result.optJSONArray("list");
+            if (list != null) {
+                for (int i = 0; i < list.length(); i++) {
+                    org.json.JSONObject c = list.optJSONObject(i);
+                    if (c == null)
+                        continue;
+
+                    RemoteContact rc = new RemoteContact();
+                    rc.id = c.optString("id", null);
+                    rc.folderId = c.optString("folderId", null);
+                    rc.folderName = (rc.folderId != null) ? folderNameById.get(rc.folderId) : null;
+                    rc.watermark = c.optString("watermark", null);
+                    rc.commonName = c.optString("commonName", null);
+                    rc.firstName = c.optString("firstName", null);
+                    rc.middleName = c.optString("middleName", null);
+                    rc.surName = c.optString("surName", null);
+                    rc.nickName = c.optString("nickName", null);
+
+                    org.json.JSONArray emails = c.optJSONArray("emailAddresses");
+                    if (emails != null) {
+                        for (int e = 0; e < emails.length(); e++) {
+                            Object v = emails.opt(e);
+                            if (v instanceof org.json.JSONObject) {
+                                org.json.JSONObject o = (org.json.JSONObject) v;
+                                String email = o.optString("email", null);
+                                if (email == null || email.isEmpty())
+                                    email = o.optString("address", null);
+                                if (email != null && !email.isEmpty())
+                                    rc.emails.add(email);
+                            } else if (v instanceof String) {
+                                String email = (String) v;
+                                if (!email.isEmpty())
+                                    rc.emails.add(email);
+                            }
+                        }
+                    }
+
+                    org.json.JSONArray phones = c.optJSONArray("phoneNumbers");
+                    if (phones != null) {
+                        for (int p = 0; p < phones.length(); p++) {
+                            Object v = phones.opt(p);
+                            if (v instanceof org.json.JSONObject) {
+                                org.json.JSONObject o = (org.json.JSONObject) v;
+                                String number = o.optString("number", null);
+                                if (number == null || number.isEmpty())
+                                    number = o.optString("phone", null);
+                                if (number != null && !number.isEmpty())
+                                    rc.phones.add(number);
+                            } else if (v instanceof String) {
+                                String number = (String) v;
+                                if (!number.isEmpty())
+                                    rc.phones.add(number);
+                            }
+                        }
+                    }
+
+                    out.add(rc);
+                }
+            }
+
+            start += LIMIT;
+        }
+
+        android.util.Log.i(TAG, "fetchContacts(): fetched=" + out.size() + " folders=" + contactFolderIds.size());
+        return out;
+    }
+
 }
