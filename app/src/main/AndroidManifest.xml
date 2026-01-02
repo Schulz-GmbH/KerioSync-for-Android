@@ -22,11 +22,18 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.KerioSync">
+        android:theme="@style/Theme.KerioSync"
+        tools:targetApi="31">
 
+        <!-- Kontakte-Struktur (wie bei dir vorhanden) -->
         <meta-data
             android:name="android.provider.CONTACTS_STRUCTURE"
             android:resource="@xml/contacts" />
+
+        <!-- Managed Configurations (MDM) -->
+        <meta-data
+            android:name="android.content.APP_RESTRICTIONS"
+            android:resource="@xml/restrictions" />
 
         <!-- AccountAuthenticator Service -->
         <service
@@ -67,22 +74,16 @@
                 android:resource="@xml/sync_contacts" />
         </service>
 
-        <!-- JobService: lauscht auf CalendarProvider Änderungen (Instant Sync bei lokalen Änderungen) -->
+        <!-- JobService für CalendarProvider Change Trigger -->
         <service
             android:name=".sync.KerioCalendarChangeJobService"
-            android:exported="true"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
 
-        <!-- AndroidX Startup Provider (WorkManager etc.) -->
-        <provider
-            android:name="androidx.startup.InitializationProvider"
-            android:authorities="${applicationId}.androidx-startup"
-            android:exported="false"
-            tools:node="merge" />
-
-        <!-- Boot Receiver: stellt sicher, dass Worker + Instant Trigger aktiv bleiben -->
+        <!-- BootReceiver: Scheduler nach Boot/Update neu anwenden -->
         <receiver
             android:name=".sync.BootReceiver"
+            android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -91,10 +92,28 @@
             </intent-filter>
         </receiver>
 
+        <!-- ManagedConfig Receiver (MDM Änderungen) -->
+        <receiver
+            android:name=".mdm.ManagedConfigReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_RESTRICTIONS_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Account Settings Activity (NICHT als Launcher!) -->
         <activity
             android:name=".ui.AccountSettingsActivity"
             android:exported="true" />
 
+        <!-- Debug Launcher Activity (nur im Debug-Variant üblicherweise) -->
+        <!-- Falls du ihn in prod nicht willst, bleibt er in deinem debug manifest/flavor -->
+        <activity
+            android:name=".ui.DebugLauncherActivity"
+            android:exported="true"
+            tools:node="remove" />
+
     </application>
+
 </manifest>

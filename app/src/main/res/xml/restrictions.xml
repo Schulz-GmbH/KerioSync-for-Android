@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Kerio Connect Basis -->
+    <restriction
+        android:key="kerio_base_url"
+        android:title="@string/mdm_title_kerio_base_url"
+        android:description="@string/mdm_desc_kerio_base_url"
+        android:restrictionType="string"
+        android:defaultValue="" />
+
+    <restriction
+        android:key="kerio_username"
+        android:title="@string/mdm_title_kerio_username"
+        android:description="@string/mdm_desc_kerio_username"
+        android:restrictionType="string"
+        android:defaultValue="" />
+
+    <restriction
+        android:key="kerio_password"
+        android:title="@string/mdm_title_kerio_password"
+        android:description="@string/mdm_desc_kerio_password"
+        android:restrictionType="string"
+        android:defaultValue="" />
+
+    <!-- Optional: expliziter Account-Name -->
+    <restriction
+        android:key="account_name"
+        android:title="@string/mdm_title_account_name"
+        android:description="@string/mdm_desc_account_name"
+        android:restrictionType="string"
+        android:defaultValue="" />
+
+    <!-- Automatisches Account-Anlegen -->
+    <restriction
+        android:key="auto_create_account"
+        android:title="@string/mdm_title_auto_create_account"
+        android:description="@string/mdm_desc_auto_create_account"
+        android:restrictionType="bool"
+        android:defaultValue="false" />
+
+    <!-- SSL / Zertifikate -->
+    <restriction
+        android:key="ssl_trust_all"
+        android:title="@string/mdm_title_ssl_trust_all"
+        android:description="@string/mdm_desc_ssl_trust_all"
+        android:restrictionType="bool"
+        android:defaultValue="false" />
+
+    <restriction
+        android:key="ssl_custom_ca_uri"
+        android:title="@string/mdm_title_ssl_custom_ca_uri"
+        android:description="@string/mdm_desc_ssl_custom_ca_uri"
+        android:restrictionType="string"
+        android:defaultValue="" />
+
+    <!-- Sync: Periodic -->
+    <restriction
+        android:key="periodic_sync_enabled"
+        android:title="@string/mdm_title_periodic_sync_enabled"
+        android:description="@string/mdm_desc_periodic_sync_enabled"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+    <restriction
+        android:key="periodic_sync_minutes"
+        android:title="@string/mdm_title_periodic_sync_minutes"
+        android:description="@string/mdm_desc_periodic_sync_minutes"
+        android:restrictionType="integer"
+        android:defaultValue="15" />
+
+    <!-- Sync: Instant Trigger -->
+    <restriction
+        android:key="instant_sync_enabled"
+        android:title="@string/mdm_title_instant_sync_enabled"
+        android:description="@string/mdm_desc_instant_sync_enabled"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+    <restriction
+        android:key="instant_update_delay_seconds"
+        android:title="@string/mdm_title_instant_update_delay_seconds"
+        android:description="@string/mdm_desc_instant_update_delay_seconds"
+        android:restrictionType="integer"
+        android:defaultValue="3" />
+
+    <restriction
+        android:key="instant_max_delay_seconds"
+        android:title="@string/mdm_title_instant_max_delay_seconds"
+        android:description="@string/mdm_desc_instant_max_delay_seconds"
+        android:restrictionType="integer"
+        android:defaultValue="10" />
+
+    <!-- Verhalten bei Config-Änderungen -->
+    <restriction
+        android:key="trigger_sync_on_change"
+        android:title="@string/mdm_title_trigger_sync_on_change"
+        android:description="@string/mdm_desc_trigger_sync_on_change"
+        android:restrictionType="bool"
+        android:defaultValue="true" />
+
+</restrictions>

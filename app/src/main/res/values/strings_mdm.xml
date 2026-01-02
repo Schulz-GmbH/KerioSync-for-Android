@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Kerio Base URL -->
+    <string name="mdm_title_kerio_base_url">Kerio Server URL</string>
+    <string name="mdm_desc_kerio_base_url">Basis-URL des Kerio Connect Servers, z. B. https://mail.firma.tld</string>
+
+    <!-- Username -->
+    <string name="mdm_title_kerio_username">Benutzername</string>
+    <string name="mdm_desc_kerio_username">Login-Name für Kerio Connect</string>
+
+    <!-- Password -->
+    <string name="mdm_title_kerio_password">Passwort</string>
+    <string name="mdm_desc_kerio_password">Passwort für Kerio Connect (MDM stellt es bereit).</string>
+
+    <!-- Optional Account Name -->
+    <string name="mdm_title_account_name">Account-Name (optional)</string>
+    <string name="mdm_desc_account_name">Wenn gesetzt, wird dieser Name für den Android-Account verwendet. Sonst wird der Benutzername genutzt.</string>
+
+    <!-- Auto create -->
+    <string name="mdm_title_auto_create_account">Account automatisch anlegen</string>
+    <string name="mdm_desc_auto_create_account">Wenn aktiv und noch kein KerioSync-Account existiert, legt die App ihn anhand der Daten an.</string>
+
+    <!-- SSL trust all -->
+    <string name="mdm_title_ssl_trust_all">Allen Zertifikaten vertrauen (unsicher)</string>
+    <string name="mdm_desc_ssl_trust_all">Nur nutzen, wenn eine saubere CA-Konfiguration nicht möglich ist.</string>
+
+    <!-- Custom CA -->
+    <string name="mdm_title_ssl_custom_ca_uri">Eigene CA-Zertifikats-URI</string>
+    <string name="mdm_desc_ssl_custom_ca_uri">Content-URI zur CA-Datei (PEM/CRT). Wenn gesetzt, sollte „trust all“ deaktiviert bleiben.</string>
+
+    <!-- Periodic sync -->
+    <string name="mdm_title_periodic_sync_enabled">Periodischer Sync aktiv</string>
+    <string name="mdm_desc_periodic_sync_enabled">Aktiviert den periodischen Pull über WorkManager.</string>
+
+    <string name="mdm_title_periodic_sync_minutes">Periodischer Sync Intervall (Minuten)</string>
+    <string name="mdm_desc_periodic_sync_minutes">Minimal 15 Minuten (Android-Limit).</string>
+
+    <!-- Instant sync -->
+    <string name="mdm_title_instant_sync_enabled">Instant Sync Trigger aktiv</string>
+    <string name="mdm_desc_instant_sync_enabled">Reagiert auf lokale Änderungen und stößt zeitnah Sync an.</string>
+
+    <string name="mdm_title_instant_update_delay_seconds">Instant Sync UpdateDelay (Sekunden)</string>
+    <string name="mdm_desc_instant_update_delay_seconds">Debounce/Verzögerung, bevor Sync gestartet wird.</string>
+
+    <string name="mdm_title_instant_max_delay_seconds">Instant Sync MaxDelay (Sekunden)</string>
+    <string name="mdm_desc_instant_max_delay_seconds">Maximale Verzögerung bis Sync spätestens startet.</string>
+
+    <!-- Trigger sync on change -->
+    <string name="mdm_title_trigger_sync_on_change">Bei Config-Änderungen Sync anstoßen</string>
+    <string name="mdm_desc_trigger_sync_on_change">Wenn aktiv: Nach MDM-Config-Update wird ein beschleunigter Sync gestartet.</string>
+
+</resources>
