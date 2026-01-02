@@ -1,3 +1,11 @@
+/**
+ * @file ManagedConfig.java
+ * @brief Zentrale Verwaltung von MDM-Konfigurationen (App Restrictions)
+ * 
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ */
 package de.schulz.keriosync.mdm;
 
 import android.accounts.Account;
@@ -16,49 +24,146 @@ import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.sync.KerioSyncScheduler;
 
 /**
- * Zentraler Zugriff auf Managed Configurations (App Restrictions) aus MDM.
+ * @class ManagedConfig
+ * @brief Zentraler Zugriff auf Managed Configurations aus MDM-Systemen
  *
- * Ziele:
- * - Robust lesen (Defaults)
- * - Änderungen erkennen (Checksum)
- * - Optional: Accounts aktualisieren/auto-anlegen
- * - Scheduler/Sync anstoßen
+ *        Diese Utility-Klasse verwaltet den Zugriff auf App Restrictions
+ *        (Managed Configurations),
+ *        die von einem Mobile Device Management (MDM) System gesetzt werden
+ *        können.
+ * 
+ *        Hauptfunktionen:
+ *        - Robustes Auslesen von MDM-Konfigurationen mit Standardwerten
+ *        - Erkennung von Konfigurationsänderungen mittels Checksum-Vergleich
+ *        - Automatisches Anwenden von Konfigurationen auf bestehende Accounts
+ *        - Optional: Automatisches Anlegen von Accounts basierend auf
+ *        MDM-Vorgaben
+ *        - Auslösen von Synchronisationen bei Konfigurationsänderungen
+ * 
+ *        Die Restriction-Keys müssen mit den Definitionen in restrictions.xml
+ *        übereinstimmen.
+ * 
+ * @note Diese Klasse kann nicht instanziiert werden (privater Konstruktor)
+ * @see android.content.RestrictionsManager
+ * @see KerioAccountConstants
+ * @see KerioSyncScheduler
  */
 public final class ManagedConfig {
 
     private static final String TAG = "KerioManagedConfig";
 
-    // Preference Schlüssel (intern)
+    /**
+     * @brief Name der SharedPreferences-Datei für MDM-Konfiguration
+     * 
+     *        Wird verwendet, um die letzte Checksum der Konfiguration zu speichern.
+     */
     private static final String PREFS_NAME = "keriosync_managedcfg";
+
+    /**
+     * @brief Preference-Key für die letzte Checksum
+     * 
+     *        Speichert die CRC32-Checksum der zuletzt angewendeten Konfiguration.
+     */
     private static final String PREF_LAST_CHECKSUM = "last_checksum";
 
+    // -------------------------------------------------------------------------
     // Restriction Keys (müssen zu restrictions.xml passen)
+    // -------------------------------------------------------------------------
+
+    /**
+     * @brief MDM-Key für die Kerio-Server-Basis-URL
+     */
     public static final String R_BASE_URL = "kerio_base_url";
+
+    /**
+     * @brief MDM-Key für den Benutzernamen
+     */
     public static final String R_USERNAME = "kerio_username";
+
+    /**
+     * @brief MDM-Key für das Passwort
+     */
     public static final String R_PASSWORD = "kerio_password";
+
+    /**
+     * @brief MDM-Key für den expliziten Account-Namen
+     * 
+     *        Überschreibt den Standard-Account-Namen (normalerweise gleich
+     *        Username).
+     */
     public static final String R_ACCOUNT_NAME = "account_name";
+
+    /**
+     * @brief MDM-Key für automatische Account-Erstellung
+     * 
+     *        Wenn true, wird automatisch ein Account angelegt, falls noch keiner
+     *        existiert.
+     */
     public static final String R_AUTO_CREATE = "auto_create_account";
 
+    /**
+     * @brief MDM-Key für SSL Trust-All-Modus
+     * 
+     *        Wenn true, werden alle SSL-Zertifikate akzeptiert (unsicher).
+     * @warning Nur für Entwicklung/Tests verwenden
+     */
     public static final String R_SSL_TRUST_ALL = "ssl_trust_all";
+
+    /**
+     * @brief MDM-Key für benutzerdefinierte CA-Zertifikat-URI
+     */
     public static final String R_SSL_CUSTOM_CA_URI = "ssl_custom_ca_uri";
 
+    /**
+     * @brief MDM-Key für Aktivierung der periodischen Synchronisation
+     */
     public static final String R_PERIODIC_ENABLED = "periodic_sync_enabled";
+
+    /**
+     * @brief MDM-Key für Intervall der periodischen Synchronisation in Minuten
+     */
     public static final String R_PERIODIC_MINUTES = "periodic_sync_minutes";
 
+    /**
+     * @brief MDM-Key für Aktivierung der Sofort-Synchronisation
+     */
     public static final String R_INSTANT_ENABLED = "instant_sync_enabled";
+
+    /**
+     * @brief MDM-Key für Update-Verzögerung der Sofort-Synchronisation in Sekunden
+     */
     public static final String R_INSTANT_UPDATE_DELAY = "instant_update_delay_seconds";
+
+    /**
+     * @brief MDM-Key für maximale Verzögerung der Sofort-Synchronisation in
+     *        Sekunden
+     */
     public static final String R_INSTANT_MAX_DELAY = "instant_max_delay_seconds";
 
+    /**
+     * @brief MDM-Key für Auslösen einer Synchronisation bei Konfigurationsänderung
+     */
     public static final String R_TRIGGER_SYNC_ON_CHANGE = "trigger_sync_on_change";
 
+    /**
+     * @brief Privater Konstruktor
+     * 
+     *        Verhindert die Instanziierung dieser Utility-Klasse.
+     */
     private ManagedConfig() {
         // Utility
     }
 
     // -------------------------------------------------------------------------
-    // Public Getter API (für Rest der App)
+    // Public Getter API
     // -------------------------------------------------------------------------
 
+    /**
+     * @brief Liest die Kerio-Server-Basis-URL aus MDM
+     * 
+     * @param context Android-Kontext
+     * @return Server-URL oder leerer String, wenn nicht konfiguriert
+     */
     public static String getBaseUrl(Context context) {
         Bundle b = readRestrictions(context);
         return safeTrim(b.getString(R_BASE_URL, ""));
@@ -69,6 +174,13 @@ public final class ManagedConfig {
         return safeTrim(b.getString(R_USERNAME, ""));
     }
 
+    /**
+     * @brief Liest das Passwort aus MDM
+     * 
+     * @param context Android-Kontext
+     * @return Passwort oder leerer String, wenn nicht konfiguriert
+     * @warning Passwort wird im Klartext übertragen
+     */
     public static String getPassword(Context context) {
         Bundle b = readRestrictions(context);
         return safeTrim(b.getString(R_PASSWORD, ""));
@@ -79,26 +191,56 @@ public final class ManagedConfig {
         return safeTrim(b.getString(R_ACCOUNT_NAME, ""));
     }
 
+    /**
+     * @brief Prüft, ob automatische Account-Erstellung aktiviert ist
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn Accounts automatisch angelegt werden sollen
+     */
     public static boolean isAutoCreateAccount(Context context) {
         Bundle b = readRestrictions(context);
         return b.getBoolean(R_AUTO_CREATE, false);
     }
 
+    /**
+     * @brief Prüft, ob SSL Trust-All-Modus aktiviert ist
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn alle SSL-Zertifikate akzeptiert werden sollen
+     */
     public static boolean isTrustAllCerts(Context context) {
         Bundle b = readRestrictions(context);
         return b.getBoolean(R_SSL_TRUST_ALL, false);
     }
 
+    /**
+     * @brief Liest die URI für benutzerdefiniertes CA-Zertifikat
+     * 
+     * @param context Android-Kontext
+     * @return CA-Zertifikat-URI oder leerer String
+     */
     public static String getCustomCaUri(Context context) {
         Bundle b = readRestrictions(context);
         return safeTrim(b.getString(R_SSL_CUSTOM_CA_URI, ""));
     }
 
+    /**
+     * @brief Prüft, ob periodische Synchronisation aktiviert ist
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn periodische Sync aktiviert ist
+     */
     public static boolean isPeriodicEnabled(Context context) {
         Bundle b = readRestrictions(context);
         return b.getBoolean(R_PERIODIC_ENABLED, true);
     }
 
+    /**
+     * @brief Liest das Intervall für periodische Synchronisation
+     * 
+     * @param context Android-Kontext
+     * @return Intervall in Minuten (mindestens MIN_PERIODIC_MINUTES)
+     */
     public static int getPeriodicMinutes(Context context) {
         Bundle b = readRestrictions(context);
         int v = b.getInt(R_PERIODIC_MINUTES, KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES);
@@ -107,11 +249,23 @@ public final class ManagedConfig {
         return v;
     }
 
+    /**
+     * @brief Prüft, ob Sofort-Synchronisation aktiviert ist
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn Sofort-Sync aktiviert ist
+     */
     public static boolean isInstantEnabled(Context context) {
         Bundle b = readRestrictions(context);
         return b.getBoolean(R_INSTANT_ENABLED, true);
     }
 
+    /**
+     * @brief Liest die Update-Verzögerung für Sofort-Synchronisation
+     * 
+     * @param context Android-Kontext
+     * @return Verzögerung in Sekunden (mindestens 0)
+     */
     public static int getInstantUpdateDelaySeconds(Context context) {
         Bundle b = readRestrictions(context);
         int v = b.getInt(R_INSTANT_UPDATE_DELAY, KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS);
@@ -120,6 +274,12 @@ public final class ManagedConfig {
         return v;
     }
 
+    /**
+     * @brief Liest die maximale Verzögerung für Sofort-Synchronisation
+     * 
+     * @param context Android-Kontext
+     * @return Maximale Verzögerung in Sekunden (mindestens 0)
+     */
     public static int getInstantMaxDelaySeconds(Context context) {
         Bundle b = readRestrictions(context);
         int v = b.getInt(R_INSTANT_MAX_DELAY, KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS);
@@ -128,6 +288,14 @@ public final class ManagedConfig {
         return v;
     }
 
+    /**
+     * @brief Prüft, ob Synchronisation bei Konfigurationsänderung ausgelöst werden
+     *        soll
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn bei Änderungen eine Sync getriggert werden soll (Standard:
+     *         true)
+     */
     public static boolean isTriggerSyncOnChange(Context context) {
         Bundle b = readRestrictions(context);
         return b.getBoolean(R_TRIGGER_SYNC_ON_CHANGE, true);
@@ -138,11 +306,15 @@ public final class ManagedConfig {
     // -------------------------------------------------------------------------
 
     /**
-     * Wendet die Managed Config auf alle existierenden KerioSync-Accounts an.
-     * Optional: legt Account automatisch an, wenn konfiguriert.
-     *
-     * @return true wenn sich etwas geändert hat (Checksum unterschiedlich), sonst
-     *         false
+     * @brief Wendet MDM-Konfiguration auf Accounts an, wenn sich etwas geändert hat
+     * 
+     *        Vergleicht die aktuelle MDM-Konfiguration mit der zuletzt angewendeten
+     *        (mittels Checksum). Bei Änderungen werden alle existierenden
+     *        Kerio-Accounts
+     *        aktualisiert. Optional wird ein Account automatisch angelegt.
+     * 
+     * @param context Android-Kontext
+     * @return true, wenn sich die Konfiguration geändert hat und angewendet wurde
      */
     public static boolean applyToAllAccountsIfChanged(Context context) {
         if (context == null)
@@ -177,12 +349,20 @@ public final class ManagedConfig {
     }
 
     /**
-     * Wendet Config immer an (ohne Checksum-Vergleich).
+     * @brief Wendet MDM-Konfiguration auf alle Accounts an (ohne Checksum-Prüfung)
+     * 
+     * @param context Android-Kontext
      */
     public static void applyToAllAccounts(Context context) {
         applyToAllAccounts(context, readRestrictions(context));
     }
 
+    /**
+     * @brief Interne Methode zum Anwenden der Konfiguration auf alle Accounts
+     * 
+     * @param context Android-Kontext
+     * @param r       Bundle mit den Restrictions
+     */
     private static void applyToAllAccounts(Context context, Bundle r) {
         AccountManager am = AccountManager.get(context);
         Account[] accounts = am.getAccountsByType(KerioAccountConstants.ACCOUNT_TYPE);
@@ -203,6 +383,18 @@ public final class ManagedConfig {
         }
     }
 
+    /**
+     * @brief Wendet MDM-Konfiguration auf einen einzelnen Account an
+     * 
+     *        Aktualisiert Server-URL, Credentials, SSL-Einstellungen und
+     *        Sync-Parameter
+     *        des angegebenen Accounts basierend auf den MDM-Vorgaben.
+     * 
+     * @param context Android-Kontext
+     * @param am      AccountManager-Instanz
+     * @param account Zu aktualisierender Account
+     * @param r       Bundle mit den Restrictions
+     */
     private static void applyToSingleAccount(Context context, AccountManager am, Account account, Bundle r) {
         String baseUrl = safeTrim(r.getString(R_BASE_URL, ""));
         String username = safeTrim(r.getString(R_USERNAME, ""));
@@ -260,6 +452,17 @@ public final class ManagedConfig {
         Log.i(TAG, "applyToSingleAccount(): applied to " + account.name);
     }
 
+    /**
+     * @brief Versucht, einen Account automatisch zu erstellen
+     * 
+     *        Legt basierend auf den MDM-Vorgaben einen neuen Kerio-Account an,
+     *        falls baseUrl und username konfiguriert sind.
+     * 
+     * @param context Android-Kontext
+     * @param am      AccountManager-Instanz
+     * @param r       Bundle mit den Restrictions
+     * @return Neu erstellter Account oder null bei Fehler
+     */
     private static Account tryAutoCreateAccount(Context context, AccountManager am, Bundle r) {
         String baseUrl = safeTrim(r.getString(R_BASE_URL, ""));
         String username = safeTrim(r.getString(R_USERNAME, ""));
@@ -298,6 +501,11 @@ public final class ManagedConfig {
         return a;
     }
 
+    /**
+     * @brief Löst eine beschleunigte Synchronisation für alle Accounts aus
+     * 
+     * @param context Android-Kontext
+     */
     private static void triggerExpeditedSyncAll(Context context) {
         AccountManager am = AccountManager.get(context);
         Account[] accounts = am.getAccountsByType(KerioAccountConstants.ACCOUNT_TYPE);
@@ -314,6 +522,12 @@ public final class ManagedConfig {
     // Low-level: Restrictions lesen / Checksum
     // -------------------------------------------------------------------------
 
+    /**
+     * @brief Liest die App Restrictions vom RestrictionsManager
+     * 
+     * @param context Android-Kontext
+     * @return Bundle mit Restrictions oder leeres Bundle bei Fehler
+     */
     private static Bundle readRestrictions(Context context) {
         try {
             RestrictionsManager rm = (RestrictionsManager) context.getSystemService(Context.RESTRICTIONS_SERVICE);
@@ -328,6 +542,15 @@ public final class ManagedConfig {
         }
     }
 
+    /**
+     * @brief Berechnet eine CRC32-Checksum über alle Bundle-Einträge
+     * 
+     *        Die Checksum wird über einen sortierten, stabilen String aller
+     *        Key-Value-Paare berechnet, um Konfigurationsänderungen zu erkennen.
+     * 
+     * @param b Bundle mit Restrictions
+     * @return CRC32-Checksum oder -1 bei Fehler
+     */
     private static long checksum(Bundle b) {
         try {
             // Stabiler String über Keys sortiert
@@ -350,6 +573,12 @@ public final class ManagedConfig {
         }
     }
 
+    /**
+     * @brief Sicheres Trimmen von Strings mit Null-Behandlung
+     * 
+     * @param s Zu trimmender String (kann null sein)
+     * @return Getrimmter String oder leerer String, falls null
+     */
     private static String safeTrim(String s) {
         return s == null ? "" : s.trim();
     }

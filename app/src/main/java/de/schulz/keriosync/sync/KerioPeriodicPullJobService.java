@@ -1,3 +1,11 @@
+/**
+ * @file    KerioPeriodicPullJobService.java
+ * @brief   JobService für zuverlässige periodische Calendar/Contact-Pull-Synchronisation
+ * @author  Kerio Sync Team
+ * @date    2025
+ * @version 1.0
+ */
+
 package de.schulz.keriosync.sync;
 
 import android.accounts.Account;
@@ -9,16 +17,35 @@ import android.util.Log;
 import de.schulz.keriosync.auth.KerioAccountConstants;
 
 /**
- * Periodischer JobScheduler-Fallback für Server -> Client Pull.
+ * @class KerioPeriodicPullJobService
+ * @brief JobScheduler-Service für zuverlässigen periodischen Server->Client
+ *        Pull
  *
- * Hintergrund:
- * - addPeriodicSync()/SyncAdapter periodic wird auf vielen OEM ROMs (Samsung etc.)
- *   gebatcht/unterdrückt und kann "scheinbar nie" laufen.
- * - Dieser Job triggert zuverlässig alle X Minuten ContentResolver.requestSync(...).
+ *        **Funktion:**
+ *        - Fallback-Mechanismus für periodische Synchronisation (Server ->
+ *        Client)
+ *        - Triggert alle X Minuten ContentResolver.requestSync() für alle
+ *        Kerio-Accounts
+ *        - Verhindert Sync-Suppression auf OEM-ROMs (Samsung etc.)
  *
- * Wichtig:
- * - Der SyncAdapter bleibt die Implementierung (onPerformSync).
- * - Der Job ist nur ein Trigger.
+ *        **Hintergrund:**
+ *        - addPeriodicSync()/SyncAdapter periodic wird auf vielen OEM-ROMs
+ *        gebündelt/unterdrückt
+ *        - Kann lange Zeit ohne Ausführung verstreichen
+ *        - JobScheduler ermöglicht zuverlässige Trigger mit minimalem
+ *        Battery-Impact
+ *
+ *        **Architektur:**
+ *        - JobService ist reiner Trigger (onStartJob/onStopJob)
+ *        - Echte Sync-Implementierung bleibt in AbstractThreadedSyncAdapter
+ *        - Nutzt KerioSyncScheduler.requestExpeditedSync() mit MANUAL-Flag für
+ *        höhere Priorität
+ *
+ *        **Scheduling:**
+ *        - Job wird via KerioSyncScheduler.scheduleOrCancelPeriodicSync()
+ *        geplant
+ *        - JobId ist account-spezifisch (stable CRC32)
+ *        - Extras: EXTRA_ACCOUNT_NAME, EXTRA_ACCOUNT_TYPE
  */
 public class KerioPeriodicPullJobService extends JobService {
 
@@ -27,6 +54,26 @@ public class KerioPeriodicPullJobService extends JobService {
     static final String EXTRA_ACCOUNT_NAME = "account_name";
     static final String EXTRA_ACCOUNT_TYPE = "account_type";
 
+    /**
+     * @brief Wird ausgelöst, wenn der periodische Job vom JobScheduler ausgeführt
+     *        wird
+     *
+     *        **Ablauf:**
+     *        1. Extrahiert Account-Informationen aus Job-Extras
+     *        (EXTRA_ACCOUNT_NAME, EXTRA_ACCOUNT_TYPE)
+     *        2. Validiert Account-Daten und Account-Type
+     *        3. Erstellt Account-Objekt
+     *        4. Ruft KerioSyncScheduler.requestExpeditedSync() auf
+     *        5. Signalisiert Job-Abschluss mit jobFinished(params, false)
+     *
+     *        **Return-Wert:**
+     *        - false: Job wird nicht neu geplant bei Fehler
+     *        - Die Neu-Planung obliegt dem Scheduler selbst
+     *
+     * @param params JobParameters vom JobScheduler (enthält Extras mit
+     *               Account-Info)
+     * @return false (Neuplaning wird vom Scheduler selbst verwaltet)
+     */
     @Override
     public boolean onStartJob(JobParameters params) {
         try {
@@ -51,7 +98,8 @@ public class KerioPeriodicPullJobService extends JobService {
             Log.i(TAG, "PeriodicPullJob -> requestSync() für " + account.name + " / " + account.type
                     + " (jobId=" + params.getJobId() + ")");
 
-            // Wir wollen Pull zuverlässig -> MANUAL + EXPEDITED erhöht die Chance auf Samsung.
+            // Wir wollen Pull zuverlässig -> MANUAL + EXPEDITED erhöht die Chance auf
+            // Samsung.
             KerioSyncScheduler.requestExpeditedSync(account);
 
             jobFinished(params, false);
@@ -63,6 +111,16 @@ public class KerioPeriodicPullJobService extends JobService {
         }
     }
 
+    /**
+     * @brief Wird aufgerufen, wenn das System den laufenden Job abbricht
+     *
+     *        **Grund:**
+     *        - Geräte-Neustart, Stromsparmodus, oder System-Ressourcen-Mangel
+     *        - Ermöglicht JobScheduler, den Job erneut zu planen
+     *
+     * @param params JobParameters des abgebrochenen Jobs
+     * @return true, damit JobScheduler den Job später erneut plant
+     */
     @Override
     public boolean onStopJob(JobParameters params) {
         // Wenn das System abbricht, darf neu geplant werden.

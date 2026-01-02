@@ -1,4 +1,11 @@
-// ===== app/src/main/java/de/schulz/keriosync/sync/KerioCalendarChangeJobService.java =====
+/**
+ * @file KerioCalendarChangeJobService.java
+ * @brief JobService für Instant-Sync bei Änderungen im CalendarProvider
+ *
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ */
 package de.schulz.keriosync.sync;
 
 import android.accounts.Account;
@@ -19,8 +26,14 @@ import java.util.zip.CRC32;
 import de.schulz.keriosync.auth.KerioAccountConstants;
 
 /**
- * JobService, der auf Änderungen im CalendarProvider reagiert (TriggerContentUri)
- * und dann einen expedited Sync auslöst.
+ * @class KerioCalendarChangeJobService
+ * @brief Reagiert auf Änderungen im CalendarProvider via TriggerContentUri.
+ *
+ *        Nutzt TriggerContentUri (Content Observer) um bei lokalen
+ *        Kalenderänderungen
+ *        (Client -> Server) einen expedited Sync auszulösen. Verzögerung und
+ *        Max-Delay
+ *        sind konfigurierbar über UserData-Keys (Instant Sync Settings).
  */
 public class KerioCalendarChangeJobService extends JobService {
 
@@ -29,6 +42,11 @@ public class KerioCalendarChangeJobService extends JobService {
     private static final String EXTRA_ACCOUNT_NAME = "account_name";
     private static final String EXTRA_ACCOUNT_TYPE = "account_type";
 
+    /**
+     * @brief Job-Start: Liest Account-Daten und löst expedited Sync aus.
+     * @param params Job-Parameter mit Account-Info
+     * @return false (Job ist sofort fertig)
+     */
     @Override
     public boolean onStartJob(JobParameters params) {
         try {
@@ -57,11 +75,22 @@ public class KerioCalendarChangeJobService extends JobService {
         }
     }
 
+    /**
+     * @brief Job-Stop: wird vom System aufgerufen, wenn Job vorzeitig abgebrochen
+     *        wird.
+     * @param params Job-Parameter
+     * @return true (Job soll neu gestartet werden)
+     */
     @Override
     public boolean onStopJob(JobParameters params) {
         return true;
     }
 
+    /**
+     * @brief Plant oder storniert den Instant-Sync Job für einen Account.
+     * @param context App-Kontext
+     * @param account Zu konfigurierender Kerio-Account
+     */
     public static void scheduleOrCancelForAccount(Context context, Account account) {
         AccountManager am = AccountManager.get(context);
 
@@ -69,16 +98,16 @@ public class KerioCalendarChangeJobService extends JobService {
 
         int updateDelaySec = parseIntOrDefault(
                 am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_UPDATE_DELAY_SECONDS),
-                KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS
-        );
+                KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS);
 
         int maxDelaySec = parseIntOrDefault(
                 am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_MAX_DELAY_SECONDS),
-                KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS
-        );
+                KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS);
 
-        if (updateDelaySec < 1) updateDelaySec = 1;
-        if (maxDelaySec < updateDelaySec) maxDelaySec = updateDelaySec;
+        if (updateDelaySec < 1)
+            updateDelaySec = 1;
+        if (maxDelaySec < updateDelaySec)
+            maxDelaySec = updateDelaySec;
 
         int jobId = stableJobIdForAccount(account);
 
@@ -106,10 +135,15 @@ public class KerioCalendarChangeJobService extends JobService {
                 // WICHTIG: NICHT setPersisted(true) mit TriggerContentUri
                 .setTriggerContentUpdateDelay(updateDelaySec * 1000L)
                 .setTriggerContentMaxDelay(maxDelaySec * 1000L)
+                /**
+                 * @brief Parsed einen String-Wert zu int, liefert Default bei Fehler.
+                 * @param val Eingabestring
+                 * @param def Default-Wert
+                 * @return geparster int oder Default
+                 */
                 .setExtras(pExtras)
                 .addTriggerContentUri(
-                        new JobInfo.TriggerContentUri(eventsUri, JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS)
-                )
+                        new JobInfo.TriggerContentUri(eventsUri, JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS))
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
 
         int res = scheduler.schedule(b.build());
@@ -120,15 +154,34 @@ public class KerioCalendarChangeJobService extends JobService {
                 + ", uri=" + eventsUri);
     }
 
+    /**
+     * @brief Parst einen String zu int, liefert Default bei Fehler.
+     * @param val Eingabestring
+     * @param def Default-Wert
+     * @return geparster int oder Default
+     */
     private static int parseIntOrDefault(String val, int def) {
         try {
-            if (val == null) return def;
+            if (val == null)
+                return def;
+            /**
+             * @brief Erzeugt eine stabile Job-ID basierend auf Account-Name und -Typ
+             *        (CRC32).
+             * @param account Kerio-Account
+             * @return Job-ID im Bereich 10000..49999
+             */
             return Integer.parseInt(val.trim());
         } catch (Exception ignored) {
             return def;
         }
     }
 
+    /**
+     * @brief Erzeugt eine stabile Job-ID basierend auf Account-Name und -Typ
+     *        (CRC32).
+     * @param account Kerio-Account
+     * @return Job-ID im Bereich 10000..49999
+     */
     private static int stableJobIdForAccount(Account account) {
         CRC32 crc = new CRC32();
         crc.update((account.type + "|" + account.name).getBytes(StandardCharsets.UTF_8));

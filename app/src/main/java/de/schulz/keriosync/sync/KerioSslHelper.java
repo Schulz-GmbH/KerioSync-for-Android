@@ -1,3 +1,11 @@
+/**
+ * @file    KerioSslHelper.java
+ * @brief   Hilfsfunktionen für Custom CA (Benutzerdefinierte Zertifikate) und SSL/TLS-Konfiguration
+ * @author  Kerio Sync Team
+ * @date    2025
+ * @version 1.0
+ */
+
 package de.schulz.keriosync.sync;
 
 import android.content.Context;
@@ -11,8 +19,27 @@ import javax.net.ssl.SSLSocketFactory;
 import de.schulz.keriosync.net.KerioApiClient;
 
 /**
- * Hilfsklasse zum Laden einer benutzerdefinierten CA (z.B. Firmen-CA)
- * und zum Erzeugen einer SSLSocketFactory, die dieser CA vertraut.
+ * @class KerioSslHelper
+ * @brief Utility-Klasse für Custom CA und SSL/TLS-Zertifikat-Management
+ *
+ *        **Funktion:**
+ *        - Lädt benutzerdefinierte CA-Zertifikate über Content-URIs (z.B.
+ *        Dateipicker)
+ *        - Erzeugt SSLSocketFactory mit Custom CA Vertrauen
+ *        - Unterstützt X.509 PEM/CRT Zertifikatsformate
+ *        - Integriert mit KerioApiClient für Server-Kommunikation
+ *
+ *        **Use Cases:**
+ *        - Firmen-interne CAs (z.B. Self-Signed, MITM-Proxy)
+ *        - Proxy-Umgebungen mit Custom Root Certificates
+ *        - Enterprise-Sicherheitsrichtlinien
+ *
+ *        **Architektur:**
+ *        - Stateless Utility (private Konstruktor)
+ *        - loadCustomCaSocketFactory() als einzige Public-API
+ *        - Delegation an KerioApiClient.buildCustomCaSocketFactory() für
+ *        SSLContext-Aufbau
+ *        - Ressourcen-Management (InputStream.close() im finally-Block)
  */
 public final class KerioSslHelper {
 
@@ -23,12 +50,35 @@ public final class KerioSslHelper {
     }
 
     /**
-     * Lädt eine CA-Zertifikatsdatei über eine Content-URI (z.B. aus dem Dateipicker)
-     * und erzeugt daraus eine SSLSocketFactory.
+     * @brief Lädt eine benutzerdefinierte CA-Zertifikatsdatei und erzeugt
+     *        SSLSocketFactory
      *
-     * @param context Android Context
-     * @param caUri   Content-URI zur CA-Datei (PEM/CRT, X.509)
-     * @return SSLSocketFactory oder Exception
+     *        **Ablauf:**
+     *        1. Validiert Context und URI (nicht null)
+     *        2. Öffnet InputStream via ContentResolver.openInputStream(caUri)
+     *        3. Delegiert an KerioApiClient.buildCustomCaSocketFactory(InputStream)
+     *        4. Schließt InputStream im finally-Block
+     *        5. Gibt fertige SSLSocketFactory zurück
+     *
+     *        **Zertifikatformat:**
+     *        - X.509 PEM (-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----)
+     *        - X.509 DER (binär)
+     *        - CRT (Alias für PEM)
+     *
+     *        **Exception-Handling:**
+     *        - IllegalArgumentException bei null-Parametern
+     *        - IllegalStateException wenn openInputStream null liefert
+     *        - Exception von KerioApiClient (Parse-Fehler, Zertifikat-Fehler)
+     *
+     * @param context Android Context für ContentResolver.openInputStream()
+     * @param caUri   Content-URI zur CA-Zertifikatsdatei (z.B. vom Dateipicker)
+     *
+     * @return SSLSocketFactory mit Custom CA Vertrauen
+     *
+     * @throws IllegalArgumentException wenn context oder caUri null
+     * @throws IllegalStateException    wenn ContentResolver.openInputStream() null
+     *                                  zurückgibt
+     * @throws Exception                bei Zertifikat-Parse-Fehler oder SSL-Fehler
      */
     public static SSLSocketFactory loadCustomCaSocketFactory(Context context, Uri caUri) throws Exception {
         if (context == null) {

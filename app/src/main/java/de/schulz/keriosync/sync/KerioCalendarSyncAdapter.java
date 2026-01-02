@@ -1,3 +1,11 @@
+/**
+ * @file KerioCalendarSyncAdapter.java
+ * @brief SyncAdapter für bidirektionale Kalender-Synchronisation mit Kerio Connect
+ *
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ */
 package de.schulz.keriosync.sync;
 
 import android.accounts.Account;
@@ -31,20 +39,22 @@ import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.net.KerioApiClient;
 
 /**
- * SyncAdapter für Kalenderdaten von Kerio Connect.
+ * @class KerioCalendarSyncAdapter
+ * @brief Bidirektionaler Kalender-SyncAdapter für Kerio Connect.
+ *        Synchronisiert Kalender und Termine zwischen Android CalendarProvider
+ *        und Kerio Connect Server. Unterstützt Public/Shared/Delegated
+ *        Kalender,
+ *        bidirektionales Sync (Server<->Client) sowie Update/Delete/Create.
  *
- * Fix/Erweiterung:
- * - Updates an bestehenden Terminen werden zuverlässig übertragen, weil:
- * 1) KerioApiClient.fetchOccurrenceById() korrekt parst
- * 2) _SYNC_ID wird (soweit möglich) auf echte Kerio-Occurrence-ID gemappt
- * 3) Für alte locally-created Einträge mit _SYNC_ID = "eventId@dtStart" wird
- * beim Update/Delete versucht,
- * die echte Occurrence-ID nachträglich zu resolven und lokal zu reparieren.
+ *        Wichtige Sync-Mappings:
+ *        - _SYNC_ID: Kerio Occurrence-ID (id aus Occurrences.get)
+ *        - SYNC_DATA2: Kerio Event-ID (eventId)
+ *        - SYNC_DATA1: lastModificationTime (Millis als String)
  *
- * Wichtig:
- * - _SYNC_ID: Kerio Occurrence-ID (id aus Occurrences.get)
- * - SYNC_DATA2: Kerio Event-ID (eventId)
- * - SYNC_DATA1: lastModificationTime (Millis als String)
+ *        Besonderheiten:
+ *        - Automatisches Resolving von Occurrence-IDs für neu erstellte Events
+ *        - Reparatur-Mechanismus für Legacy-Einträge (eventId@dtStart)
+ *        - Change-Trigger-Unterdrückung während Sync zur Vermeidung von Loops
  */
 public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
@@ -54,14 +64,19 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     private final Context mContext;
 
     /**
-     * Cache der zuletzt gelesenen lokalen Kalender-Infos (pro Remote-Calendar-ID).
-     * Wird pro Sync-Lauf neu aufgebaut und genutzt, um Nutzer-Einstellungen wie SYNC_EVENTS zu respektieren.
+     * @brief Cache der lokalen Kalender-Infos (pro Remote-Calendar-ID).
+     *        Wird pro Sync-Lauf neu aufgebaut und genutzt, um Nutzer-Einstellungen
+     *        wie
+     *        SYNC_EVENTS zu respektieren.
      */
     private volatile Map<String, LocalCalendarInfo> mLocalCalendarInfoByRemoteId = new HashMap<>();
 
     /**
-     * Interne Struktur, um lokale Kalender-Einstellungen zu cachen,
-     * damit wir Nutzerwerte (Farbe, Sichtbarkeit, Sync-Flag) nicht überschreiben.
+     * @class LocalCalendarInfo
+     * @brief Interne Struktur für lokale Kalender-Einstellungen.
+     *
+     *        Cached Nutzerwerte (Farbe, Sichtbarkeit, Sync-Flag), damit diese
+     *        nicht während Sync überschrieben werden.
      */
     private static class LocalCalendarInfo {
         /** Lokale CalendarContract.Calendars._ID */
@@ -80,8 +95,11 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
         Integer calendarColor;
     }
 
-
-
+    /**
+     * @brief Konstruktor für den SyncAdapter.
+     * @param context        App-Kontext
+     * @param autoInitialize Auto-Initialize-Flag
+     */
     public KerioCalendarSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
         mContext = context.getApplicationContext();
@@ -90,6 +108,15 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
                 + ", context=" + mContext);
     }
 
+    /**
+     * @brief Hauptmethode für Synchronisation: Push lokale Änderungen, pull
+     *        Remote-Daten.
+     * @param account    Kerio-Account
+     * @param extras     Sync-Parameter (manual, expedited, initialize)
+     * @param authority  CalendarContract.AUTHORITY
+     * @param provider   ContentProviderClient
+     * @param syncResult Sync-Statistiken
+     */
     @Override
     public void onPerformSync(Account account,
             Bundle extras,
@@ -208,9 +235,21 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             Log.e(TAG, "Fehler beim Kalender-Sync", e);
             syncResult.stats.numIoExceptions++;
         } finally {
+            /**
+             * @brief Baut eine SyncAdapter-URI für Events (CALLER_IS_SYNCADAPTER=true).
+             * @param account Kerio-Account
+             * @return Events-URI mit SyncAdapter-Parametern
+             */
             suppressChangeTriggers("sync-end:" + account.name, 8);
         }
     }
+
+    /**
+     * @brief Baut eine SyncAdapter-URI für ein spezifisches Event.
+     * @param account Kerio-Account
+     * @param eventId Lokale Event-ID
+     * @return Events-URI mit appended Event-ID
+     */
 
     // ------------------------------------------------------------------------
     // Helper: SyncAdapter-Events-URI
@@ -218,12 +257,28 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
     private Uri buildSyncAdapterEventsUri(Account account) {
         return CalendarContract.Events.CONTENT_URI.buildUpon()
+                /**
+                 * @brief Prüft, ob ein String eine echte Kerio Occurrence-ID ist.
+                 * @param syncId _SYNC_ID-Wert
+                 * @return true, wenn Format "keriostorage://occurrence/..." oder
+                 *         "keriostorage:"
+                 */
                 .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
                 .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, account.name)
                 .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, account.type)
                 .build();
     }
 
+    /**
+     * @brief Pusht lokal neu erstellte Events zum Kerio-Server (Events.create).
+     *        Sucht dirty Events ohne remoteEventId und legt sie auf dem Server an.
+     *        Versucht anschließend, echte Occurrence-ID zu resolven.
+     * @param account         Kerio-Account
+     * @param localCalendarId Lokale Kalender-ID
+     * @param remoteCalendar  Remote-Kalender (für readOnly-Check)
+     * @param client          KerioApiClient
+     * @param syncResult      Sync-Statistiken
+     */
     private Uri buildSyncAdapterEventsUri(Account account, long eventId) {
         Uri base = buildSyncAdapterEventsUri(account);
         return ContentUris.withAppendedId(base, eventId);
@@ -240,6 +295,21 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // Push: Lokale neu erstellte Events -> Kerio (Events.create)
     // ------------------------------------------------------------------------
 
+    /*
+     * @brief Pusht lokal neu erstellte Events zum Kerio-Server (Events.create).
+     * Sucht dirty Events ohne remoteEventId und legt sie auf dem Server an.
+     * Versucht anschließend, echte Occurrence-ID zu resolven.
+     * 
+     * @param account Kerio-Account
+     * 
+     * @param localCalendarId Lokale Kalender-ID
+     * 
+     * @param remoteCalendar Remote-Kalender (für readOnly-Check)
+     * 
+     * @param client KerioApiClient
+     * 
+     * @param syncResult Sync-Statistiken
+     */
     private void pushLocalCreatedEvents(Account account,
             long localCalendarId,
             KerioApiClient.RemoteCalendar remoteCalendar,
@@ -355,6 +425,19 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
                     Log.i(TAG, "Event CREATE gepusht: localId=" + localId +
                             ", remoteEventId=" + cr.id +
+                            /**
+                             * @brief Pusht lokal gelöschte Events zum Kerio-Server (Occurrences.remove).
+                             *
+                             *        Sucht deleted Events mit _SYNC_ID und löscht sie auf dem Server.
+                             *        Führt ggf. Repair durch (resolveOccurrenceId), wenn _SYNC_ID kein
+                             *        echtes
+                             *        Kerio-Format hat.
+                             * @param account         Kerio-Account
+                             * @param localCalendarId Lokale Kalender-ID
+                             * @param remoteCalendar  Remote-Kalender (für Folder-ID)
+                             * @param client          KerioApiClient
+                             * @param syncResult      Sync-Statistiken
+                             */
                             ", occurrenceId=" + resolvedOccurrenceId +
                             ", rows=" + rows +
                             ", oldSyncId=" + syncId);
@@ -377,6 +460,22 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // Push: Lokale gelöschte Events -> Kerio (Occurrences.remove)
     // ------------------------------------------------------------------------
 
+    /*
+     * @brief Pusht lokal gelöschte Events zum Kerio-Server (Occurrences.remove).
+     * Sucht deleted Events mit _SYNC_ID und löscht sie auf dem Server.
+     * Führt ggf. Repair durch (resolveOccurrenceId), wenn _SYNC_ID kein echtes
+     * Kerio-Format hat.
+     * 
+     * @param account Kerio-Account
+     * 
+     * @param localCalendarId Lokale Kalender-ID
+     * 
+     * @param remoteCalendar Remote-Kalender (für Folder-ID)
+     * 
+     * @param client KerioApiClient
+     * 
+     * @param syncResult Sync-Statistiken
+     */
     private void pushLocalDeletedEvents(Account account,
             long localCalendarId,
             KerioApiClient.RemoteCalendar remoteCalendar,
@@ -449,6 +548,17 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
 
                     int rows = resolver.delete(
                             buildSyncAdapterEventsUri(account, localEventId),
+                            /**
+                             * @brief Pusht lokal geänderte Events zum Kerio-Server (Occurrences.set).
+                             *
+                             *        Sucht dirty Events mit _SYNC_ID und aktualisiert sie auf dem Server.
+                             *        Führt ggf. Repair durch, wenn _SYNC_ID kein echtes Kerio-Format hat.
+                             * @param account         Kerio-Account
+                             * @param localCalendarId Lokale Kalender-ID
+                             * @param remoteCalendar  Remote-Kalender (für readOnly-Check)
+                             * @param client          KerioApiClient
+                             * @param syncResult      Sync-Statistiken
+                             */
                             null,
                             null);
 
@@ -477,6 +587,16 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // Push: Lokale Updates an bestehenden Events -> Kerio (Occurrences.set)
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Pusht lokal geänderte Events zum Kerio-Server (Occurrences.set).
+     *        Sucht dirty Events mit _SYNC_ID und aktualisiert sie auf dem Server.
+     *        Führt ggf. Repair durch, wenn _SYNC_ID kein echtes Kerio-Format hat.
+     * @param account         Kerio-Account
+     * @param localCalendarId Lokale Kalender-ID
+     * @param remoteCalendar  Remote-Kalender (für readOnly-Check)
+     * @param client          KerioApiClient
+     * @param syncResult      Sync-Statistiken
+     */
     private void pushLocalUpdatedEvents(Account account,
             long localCalendarId,
             KerioApiClient.RemoteCalendar remoteCalendar,
@@ -605,6 +725,15 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
     // Kalender-Sync (lokale <-> Remote-Kalender)
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Synchronisiert Kalender für einen Account: Legt neue lokale
+     *        Kalender an,
+     *        aktualisiert bestehende und cached lokale Einstellungen.
+     * @param account         Kerio-Account
+     * @param remoteCalendars Liste Remote-Kalender vom Server
+     * @param syncResult      Sync-Statistiken
+     * @return Map RemoteCalendar.id -> lokale CalendarContract.Calendars._ID
+     */
     private Map<String, Long> syncCalendarsForAccount(
             Account account,
             List<KerioApiClient.RemoteCalendar> remoteCalendars,
@@ -696,22 +825,23 @@ public class KerioCalendarSyncAdapter extends AbstractThreadedSyncAdapter {
             String displayName = (rc.displayName != null && !rc.displayName.isEmpty()) ? rc.displayName : rc.name;
 
             values.put(CalendarContract.Calendars.NAME, displayName);
-values.put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, displayName);
-values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+            values.put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, displayName);
+            values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
                     rc.readOnly
                             ? CalendarContract.Calendars.CAL_ACCESS_READ
                             : CalendarContract.Calendars.CAL_ACCESS_OWNER);
-
 
             values.put(CalendarContract.Calendars.OWNER_ACCOUNT, account.name);
 
             values.put(CalendarContract.Calendars._SYNC_ID, rc.id);
 
             if (localId == null) {
-                // Defaults nur beim ersten Anlegen setzen – Nutzer-Änderungen (Farbe/Sichtbarkeit/Sync) dürfen nicht überschrieben werden.
+                // Defaults nur beim ersten Anlegen setzen – Nutzer-Änderungen
+                // (Farbe/Sichtbarkeit/Sync) dürfen nicht überschrieben werden.
                 values.put(CalendarContract.Calendars.VISIBLE, 1);
                 values.put(CalendarContract.Calendars.SYNC_EVENTS, 1);
-                // Keine feste Standardfarbe erzwingen – Android wählt eine; Nutzer kann sie später ändern.
+                // Keine feste Standardfarbe erzwingen – Android wählt eine; Nutzer kann sie
+                // später ändern.
                 Uri inserted = mContentResolver.insert(syncCalendarsUri, values);
                 if (inserted != null) {
                     long newId = ContentUris.parseId(inserted);
@@ -757,6 +887,15 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
     // Event-Sync (lokale <-> Remote-Events)
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Synchronisiert Events für einen lokalen Kalender: Fügt neue Events
+     *        hinzu,
+     *        aktualisiert bestehende.
+     * @param account         Kerio-Account
+     * @param localCalendarId Lokale Kalender-ID
+     * @param remoteEvents    Liste Remote-Events vom Server
+     * @param syncResult      Sync-Statistiken
+     */
     private void syncEventsForCalendar(Account account,
             long localCalendarId,
             List<KerioApiClient.RemoteEvent> remoteEvents,
@@ -904,6 +1043,15 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
         }
     }
 
+    /*
+     * @brief Hilfsmethode: Prüft, ob die übergebene Zeichenkette
+     * wahrscheinlich eine Kerio-Occurrence-ID ist.
+     * 
+     * @param occurrenceId Zu prüfende Occurrence-ID
+     * 
+     * @return true, wenn es sich wahrscheinlich um eine Kerio-Occurrence-ID
+     * handelt
+     */
     private static class LocalEventInfo {
         long id;
         String uid;
@@ -927,16 +1075,34 @@ values.put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
     // SSL-Hilfsmethoden (Custom-CA)
     // ------------------------------------------------------------------------
 
+    /*
+     * @brief Erstellt eine SSLSocketFactory, die das Zertifikat aus der
+     * angegebenen
+     * URI als vertrauenswürdige CA verwendet.
+     * 
+     * @param context Kontext
+     * 
+     * @param caUri URI des CA-Zertifikats (content://-URI)
+     * 
+     * @return SSLSocketFactory mit Custom-CA
+     * 
+     * @throws Exception Bei Fehlern
+     */
     private SSLSocketFactory createSslSocketFactoryForCaUri(Context context, Uri caUri) throws Exception {
         // Delegiere an zentrale Helper-Implementierung, die eine TrustManagerFactory
-        // mit dem bereitgestellten KeyStore initialisiert (korrekte Zertifikatsprüfung).
+        // mit dem bereitgestellten KeyStore initialisiert (korrekte
+        // Zertifikatsprüfung).
         return KerioSslHelper.loadCustomCaSocketFactory(context, caUri);
     }
 
-// ------------------------------------------------------------------------
-    // Trigger-Unterdrückung (Prefs)
-    // ------------------------------------------------------------------------
-
+    /*
+     * @brief Unterdrückt Change-Trigger (ContentObserver/SyncAdapter) für
+     * bestimmte Zeit.
+     * 
+     * @param reason Grund für die Unterdrückung (Debug-Info)
+     * 
+     * @param seconds Dauer der Unterdrückung in Sekunden
+     */
     private void suppressChangeTriggers(String reason, int seconds) {
         try {
             long now = System.currentTimeMillis();

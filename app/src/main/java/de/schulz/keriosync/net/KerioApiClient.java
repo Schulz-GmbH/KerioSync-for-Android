@@ -1,3 +1,10 @@
+/**
+ * @file KerioApiClient.java
+ * @brief JSON-RPC Client für Kerio Connect (Kalender/Events)
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ */
 package de.schulz.keriosync.net;
 
 import android.util.Log;
@@ -40,20 +47,12 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 /**
- * JSON-RPC Client für Kerio Connect (Client-API/Webmail).
- *
- * Enthält:
- * - Session.login / Session.logout
- * - Folders.get (Kalenderordner)
- * - Occurrences.get (Events Pull)
- *
- * Erweiterung:
- * - Events.create (Events Push: lokale neu erstellte Termine zum Server)
- *
- * Fix/Erweiterung:
- * - Occurrences.getById Parsing korrigiert
- * - Helper zum Resolven einer Occurrence-ID für neu erstellte Events
- * (Events.create liefert i.d.R. Event-ID)
+ * @class KerioApiClient
+ * @brief JSON-RPC Client für Kerio Connect (Webmail/Client-API)
+ *        Stellt Login/Logout, Kalender-Abfragen sowie Lesen/Schreiben von
+ *        Terminen
+ *        bereit (Occurrences.*, Events.*). Unterstützt Public/Shared/Delegated
+ *        Kalender und das Auflösen von Occurrence-IDs nach Events.create.
  */
 public class KerioApiClient {
 
@@ -117,10 +116,25 @@ public class KerioApiClient {
     // Konstruktoren
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Komfort-Konstruktor ohne SSL-Sonderoptionen
+     * @param apiUrl   Basis- oder API-URL (wird normalisiert)
+     * @param username Kerio-Benutzername
+     * @param password Kerio-Passwort
+     */
     public KerioApiClient(String apiUrl, String username, String password) {
         this(apiUrl, username, password, false, null);
     }
 
+    /**
+     * @brief Haupt-Konstruktor mit SSL-Optionen
+     * @param apiUrl                 Basis- oder API-URL (wird zur JSON-RPC-URL
+     *                               normalisiert)
+     * @param username               Kerio-Benutzername
+     * @param password               Kerio-Passwort
+     * @param trustAllCerts          Unsicherer Trust-All-Modus (nur Test)
+     * @param customSslSocketFactory Optionale Custom-CA SSL Factory
+     */
     public KerioApiClient(String apiUrl,
             String username,
             String password,
@@ -138,8 +152,9 @@ public class KerioApiClient {
     }
 
     /**
-     * Normalisiert die vom Benutzer eingegebene URL zu einer
-     * Kerio-JSON-RPC-Endpoint-URL.
+     * @brief Normalisiert eine Benutzer-URL zur Kerio JSON-RPC-Endpoint-URL.
+     * @param apiUrl Benutzer-URL (Basis- oder API-URL)
+     * @return bereinigte JSON-RPC-Endpoint-URL
      */
     private static String normalizeKerioApiUrl(String apiUrl) {
         if (apiUrl == null) {
@@ -164,10 +179,11 @@ public class KerioApiClient {
         return apiUrl;
     }
 
-    // ------------------------------------------------------------------------
-    // Login / Logout
-    // ------------------------------------------------------------------------
-
+    /**
+     * @brief Führt Session.login aus und speichert das Token
+     * @throws IOException   bei Transportfehlern oder fehlendem Token
+     * @throws JSONException bei unerwarteter JSON-Struktur
+     */
     public synchronized void login() throws IOException, JSONException {
         JSONObject params = new JSONObject();
         params.put("userName", mUsername);
@@ -201,6 +217,9 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Führt Session.logout aus und räumt lokale Session-Daten.
+     */
     public synchronized void logout() throws IOException, JSONException {
         try {
             call("Session.logout", new JSONObject(), false);
@@ -210,16 +229,19 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Stellt sicher, dass ein gültiges Login besteht.
+     */
     private void ensureLoggedIn() throws IOException, JSONException {
         if (mToken == null) {
             login();
         }
     }
 
-    // ------------------------------------------------------------------------
-    // DTOs
-    // ------------------------------------------------------------------------
-
+    /**
+     * @class RemoteCalendar
+     * @brief DTO für Kerio-Kalender
+     */
     public static class RemoteCalendar {
         public String id;
         public String name;
@@ -272,6 +294,10 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @class RemoteEvent
+     * @brief DTO für Kerio-Termine/Occurrences
+     */
     public static class RemoteEvent {
         public String uid; // Occurrence-ID (id aus Occurrences.get)
         public String eventId; // Event-ID (eventId aus Occurrences.get)
@@ -305,7 +331,8 @@ public class KerioApiClient {
     }
 
     /**
-     * Ergebnis für Events.create
+     * @class CreateResult
+     * @brief Ergebnisobjekt für Events.create
      */
     public static class CreateResult {
         public int inputIndex;
@@ -320,9 +347,15 @@ public class KerioApiClient {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Kalender / Events
-    // ------------------------------------------------------------------------
+    /**
+     * @brief Holt verfügbare Kalender (eigene, Public, Shared/Delegated)
+     *        best-effort.
+     *
+     *        Nutzt Folders.get, optional Folders.getPublic,
+     *        Folders.getSharedMailboxList
+     *        sowie Folders.getSubscribed zum Filtern eingeblendeter Ordner.
+     * @return Liste aggregierter RemoteCalendar-Objekte
+     */
     public List<RemoteCalendar> fetchCalendars() throws IOException, JSONException {
         ensureLoggedIn();
 
@@ -370,6 +403,15 @@ public class KerioApiClient {
         return new ArrayList<>(byId.values());
     }
 
+    /**
+     * @brief Übernimmt Kalender aus einem Folders.get/… Result in die Map.
+     * @param resp             JSON-Antwort mit result.list
+     * @param byId             Ziel-Map nach Kalender-ID
+     * @param isPublic         Markiert Kalender als Public
+     * @param isShared         Markiert Kalender als Shared
+     * @param forcedOwnerName  Optionaler Owner-Name (z.B. bei Shared Mailboxes)
+     * @param forcedOwnerEmail Optionaler Owner-E-Mail
+     */
     private void addCalendarsFromFolderResult(JSONObject resp,
             Map<String, RemoteCalendar> byId,
             boolean isPublic,
@@ -407,6 +449,12 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Extrahiert Kalender aus Folders.getSharedMailboxList und merged sie.
+     * @param resp                JSON-Antwort
+     * @param byId                Ziel-Map nach Kalender-ID
+     * @param subscribedFolderIds Optional Liste sichtbarer Folder-IDs
+     */
     private void addCalendarsFromSharedMailboxListResult(JSONObject resp,
             Map<String, RemoteCalendar> byId,
             List<String> subscribedFolderIds) throws JSONException {
@@ -480,6 +528,11 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Liest subscribedFolderIds aus einem Folders.getSubscribed Ergebnis.
+     * @param resp JSON-Antwort
+     * @return Liste eingeblendeter Folder-IDs
+     */
     private List<String> extractSubscribedFolderIds(JSONObject resp) throws JSONException {
         List<String> ids = new ArrayList<>();
 
@@ -520,6 +573,15 @@ public class KerioApiClient {
         return ids;
     }
 
+    /**
+     * @brief Wandelt ein Kerio Folder-JSON in ein RemoteCalendar DTO.
+     * @param folder           Kerio Folder-Objekt
+     * @param isPublic         Flag für Public Folder
+     * @param isShared         Flag für Shared Folder
+     * @param forcedOwnerName  Ersatz-Owner (wenn kein ownerName geliefert)
+     * @param forcedOwnerEmail Ersatz-Owner-E-Mail
+     * @return RemoteCalendar oder null bei ungeeignetem Typ
+     */
     private RemoteCalendar folderToRemoteCalendar(JSONObject folder,
             boolean isPublic,
             boolean isShared,
@@ -591,6 +653,9 @@ public class KerioApiClient {
         return rc;
     }
 
+    /**
+     * @brief Merged zwei Kalender-Objekte; füllt fehlende Felder auf.
+     */
     private void mergeCalendar(RemoteCalendar base, RemoteCalendar incoming) {
         if (base == null || incoming == null) {
             return;
@@ -624,6 +689,12 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Parst Occurrences.get Antwort in RemoteEvents und füllt die Liste.
+     * @param response JSON-RPC Antwort
+     * @param calendar Zugehöriger Kalender
+     * @param out      Ziel-Liste
+     */
     private void parseEventsResponse(JSONObject response,
             RemoteCalendar calendar,
             List<RemoteEvent> out)
@@ -718,6 +789,11 @@ public class KerioApiClient {
         Log.i(TAG, "parseEventsResponse(): " + out.size() + " Events aus Occurrences.get gelesen.");
     }
 
+    /**
+     * @brief Holt Occurrences eines Kalenders ab einem Änderungszeitpunkt.
+     * @param calendar       Ziel-Kalender
+     * @param sinceUtcMillis Optionaler Start (UTC millis); 0 -> Default-Fenster
+     */
     public List<RemoteEvent> fetchEvents(RemoteCalendar calendar, long sinceUtcMillis)
             throws IOException, JSONException {
 
@@ -739,10 +815,15 @@ public class KerioApiClient {
     }
 
     /**
-     * Occurrences.get mit Zeitfenster.
+     * @brief Führt Occurrences.get mit Zeitfenster aus.
      *
-     * Kerio-Constraint:
-     * - Condition 'end' nur mit 'LessThan'
+     *        Kerio-Constraint: end darf nur mit LessThan verglichen werden, daher
+     *        wird
+     *        die Endzeit minimal exklusiv gesetzt.
+     * @param token          Session-Token
+     * @param calendar       Kalender (folderId)
+     * @param startUtcMillis Start-Zeitfenster (UTC)
+     * @param endUtcMillis   End-Zeitfenster (UTC)
      */
     public List<RemoteEvent> fetchEvents(String token,
             RemoteCalendar calendar,
@@ -813,10 +894,13 @@ public class KerioApiClient {
     }
 
     /**
-     * Event auf dem Server anlegen (Events.create)
+     * @brief Legt einen Termin via Events.create an.
      *
-     * Events.create liefert in der Praxis oft eine Event-ID zurück.
-     * Für Update/Delete brauchst du aber die Occurrence-ID (Occurrences.*).
+     *        Kerio liefert meist eine Event-ID zurück; für Updates/Deletes wird
+     *        später die Occurrence-ID benötigt (Occurrences.*).
+     * @param calendar Ziel-Kalender (folderId)
+     * @param event    Zu speichernder Termin
+     * @return Ergebnisobjekt mit Event-ID
      */
     public CreateResult createEvent(RemoteCalendar calendar, RemoteEvent event) throws IOException, JSONException {
         ensureLoggedIn();
@@ -887,14 +971,10 @@ public class KerioApiClient {
         return cr;
     }
 
-    // ---------------------------------------------------------------------
-    // Update/Delete: Lokale Änderungen an bestehenden Terminen -> Kerio
-    // ---------------------------------------------------------------------
-
     /**
-     * Formatiert einen Unix-Timestamp (Millis) als Kerio-UtcDateTime im
-     * UTC-Z-Format
-     * (yyyyMMdd'T'HHmmss'Z').
+     * @brief Formatiert UTC-Millis als Kerio UTC-Z String (yyyyMMdd'T'HHmmss'Z').
+     * @param millis UTC-Millis
+     * @return formatierter Kerio-String
      */
     public static String formatKerioUtcDateTime(long millis) {
         Instant instant = Instant.ofEpochMilli(millis);
@@ -903,9 +983,9 @@ public class KerioApiClient {
     }
 
     /**
-     * Formatiert ein UTC-Millis-Timestamp als Kerio Date-only String (yyyyMMdd).
-     * Kerio liefert bei Ganztags-/Mehrtagesterminen häufig nur das Datum ohne
-     * Uhrzeit.
+     * @brief Formatiert UTC-Millis als Kerio Date-only (yyyyMMdd).
+     * @param millis UTC-Millis
+     * @return yyyyMMdd String
      */
     public static String formatKerioUtcDateOnly(long millis) {
         Instant instant = Instant.ofEpochMilli(millis);
@@ -914,10 +994,8 @@ public class KerioApiClient {
     }
 
     /**
-     * Löscht eine Occurrence (ein Vorkommen) auf dem Kerio-Server.
-     *
-     * Kerio-API: Occurrences.remove(errors, occurrences)
-     * Laut IDL sind nur 'id' und 'modification' erforderlich.
+     * @brief Löscht eine Occurrence via Occurrences.remove.
+     * @param occurrenceId Kerio Occurrence-ID
      */
     public void deleteOccurrence(String occurrenceId) throws IOException {
         try {
@@ -949,12 +1027,11 @@ public class KerioApiClient {
     }
 
     /**
-     * Aktualisiert eine Occurrence (ein Vorkommen) auf dem Kerio-Server.
-     *
-     * Strategie:
-     * 1) Occurrence per getById holen (damit wir ein vollständiges Objekt haben),
-     * 2) relevante Felder überschreiben,
-     * 3) per Occurrences.set zurückschreiben.
+     * @brief Aktualisiert eine Occurrence über Occurrences.set.
+     *        Holt zunächst das bestehende Objekt (getById), überschreibt Felder und
+     *        sendet es zurück.
+     * @param occurrenceId Ziel-Occurrence-ID
+     * @param updated      Neue Feldwerte
      */
     public void updateOccurrence(String occurrenceId, RemoteEvent updated) throws IOException {
         try {
@@ -1017,16 +1094,19 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Ersetzt null durch leeren String.
+     * @param s Eingabestring
+     * @return niemals null
+     */
     private static String nullToEmpty(String s) {
         return s == null ? "" : s;
     }
 
     /**
-     * FIX: Lädt eine Occurrence als JSONObject über Occurrences.getById.
-     *
-     * Vorher war hier der zentrale Bug: du hast resp.optJSONArray("result")
-     * genutzt,
-     * aber Kerio liefert i.d.R. ein result-Objekt (JSONObject) zurück.
+     * @brief Lädt eine Occurrence via Occurrences.getById (result.occurrences).
+     * @param occurrenceId Ziel-Occurrence-ID
+     * @return Occurrence-JSONObject oder null, wenn nicht gefunden
      */
     private JSONObject fetchOccurrenceById(String occurrenceId) throws IOException {
         try {
@@ -1075,17 +1155,11 @@ public class KerioApiClient {
     }
 
     /**
-     * Helper: Für ein neu erstelltes Event (Events.create -> eventId) die
-     * passende Occurrence-ID ermitteln.
-     *
-     * Idee:
-     * - Occurrences.get im Zeitfenster um dtStart herum
-     * - Filter: eventId == <eventId>
-     *
-     * @param calendarFolderId Kerio folderId (calendar.id)
-     * @param eventId          Kerio eventId (von Events.create)
-     * @param dtStartUtcMillis Startzeit (Millis)
-     * @return occurrenceId oder null
+     * @brief Sucht zu einer eventId die zugehörige Occurrence-ID im Zeitfenster.
+     * @param calendarFolderId Kerio folderId
+     * @param eventId          Event-ID aus Events.create
+     * @param dtStartUtcMillis Erwartete Startzeit (UTC)
+     * @return Occurrence-ID oder null
      */
     public String resolveOccurrenceIdForEvent(String calendarFolderId, String eventId, long dtStartUtcMillis)
             throws IOException, JSONException {
@@ -1199,6 +1273,11 @@ public class KerioApiClient {
     // SSL Helper Hook (für KerioSslHelper)
     // ---------------------------------------------------------------------
 
+    /**
+     * @brief Erstellt eine SSLSocketFactory mit benutzerdefiniertem CA-Zertifikat.
+     * @param caInputStream InputStream des CA-Zertifikats
+     * @return SSLSocketFactory mit eingebundener CA
+     */
     public static SSLSocketFactory buildCustomCaSocketFactory(InputStream caInputStream)
             throws Exception {
         java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
@@ -1220,6 +1299,14 @@ public class KerioApiClient {
     // ------------------------------------------------------------------------
     // JSON-RPC Call
     // ------------------------------------------------------------------------
+
+    /**
+     * @brief Führt einen JSON-RPC-Call gegen den Kerio-Endpoint aus.
+     * @param method       JSON-RPC Methode
+     * @param params       Parameter-Objekt (wird bei null erzeugt)
+     * @param expectResult true, wenn ein result-Feld erwartet wird
+     * @return JSON-Antwort
+     */
     public synchronized JSONObject call(String method,
             JSONObject params,
             boolean expectResult) throws IOException, JSONException {
@@ -1331,6 +1418,11 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Liest einen InputStream vollständig als UTF-8 String.
+     * @param is InputStream
+     * @return kompletter Inhalt als String
+     */
     private String readStreamToString(InputStream is) throws IOException {
         if (is == null) {
             return null;
@@ -1347,6 +1439,10 @@ public class KerioApiClient {
         return sb.toString();
     }
 
+    /**
+     * @brief Extrahiert Set-Cookie Header und speichert sie in der lokalen Map.
+     * @param conn HTTP-Verbindung mit Response-Headern
+     */
     private void updateCookiesFromConnection(HttpURLConnection conn) {
         Map<String, List<String>> headerFields = conn.getHeaderFields();
         if (headerFields == null) {
@@ -1382,6 +1478,10 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Baut den Cookie-Header aus der lokalen Cookie-Map.
+     * @return Cookie-Header oder leerer String
+     */
     private String buildCookieHeader() {
         if (mCookies.isEmpty()) {
             return "";
@@ -1399,6 +1499,10 @@ public class KerioApiClient {
         return sb.toString();
     }
 
+    /**
+     * @brief Liefert eine unsichere Trust-All SSLSocketFactory (nur für Tests!).
+     * @return Trust-All SSLSocketFactory
+     */
     private static SSLSocketFactory getUnsafeSslSocketFactory() throws IOException {
         if (sUnsafeSslSocketFactory != null) {
             return sUnsafeSslSocketFactory;
@@ -1431,6 +1535,10 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Liefert einen HostnameVerifier, der alles akzeptiert (Testzwecke).
+     * @return HostnameVerifier
+     */
     private static HostnameVerifier getUnsafeHostnameVerifier() {
         if (sUnsafeHostnameVerifier != null) {
             return sUnsafeHostnameVerifier;
@@ -1439,6 +1547,11 @@ public class KerioApiClient {
         return sUnsafeHostnameVerifier;
     }
 
+    /**
+     * @brief Parsed Kerio DateTime/Date Strings (UTC/Offset/Date-only) nach Millis.
+     * @param kerioDateTime Kerio-Date/DateTime-String
+     * @return UTC-Millis oder 0 bei Fehler
+     */
     private long parseKerioUtcDateTimeString(String kerioDateTime) {
         if (kerioDateTime == null || kerioDateTime.isEmpty()) {
             return 0L;
@@ -1505,17 +1618,29 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Formatiert UTC-Millis als Kerio UTC-Z String.
+     * @param utcMillis UTC-Millis
+     * @return Kerio-UTC-String
+     */
     private String buildKerioUtcString(long utcMillis) {
         Instant instant = Instant.ofEpochMilli(utcMillis);
         return KERIO_UTC_Z_FORMAT.withZone(ZoneOffset.UTC).format(instant);
     }
 
+    /**
+     * @brief Prüft, ob ein String ein Kerio Date-only (yyyyMMdd) darstellt.
+     * @param v Eingabestring
+     * @return true bei Date-only
+     */
     private static boolean isKerioDateOnly(String v) {
         return v != null && v.matches("^\\d{8}$");
     }
 
     /**
-     * Kerio Date-only Start: yyyyMMdd -> 00:00 UTC (Millis)
+     * @brief Kerio Date-only Start: yyyyMMdd -> 00:00 UTC (Millis).
+     * @param yyyymmdd Datum ohne Uhrzeit
+     * @return UTC-Millis Beginn des Tages
      */
     private static long parseKerioDateOnlyStartUtcMillis(String yyyymmdd) {
         LocalDate d = LocalDate.parse(yyyymmdd, KERIO_DATE_ONLY_FORMAT);
@@ -1523,10 +1648,9 @@ public class KerioApiClient {
     }
 
     /**
-     * Kerio Date-only End ist bei deinem Server INKLUSIV.
-     * Android erwartet DTEND bei All-Day EXKLUSIV (00:00 des Folgetags).
-     *
-     * yyyyMMdd (inkl. Endtag) -> (Endtag + 1) 00:00 UTC (Millis)
+     * @brief Wandelt inklusives Date-only-Ende in exklusives UTC-Millis um.
+     * @param yyyymmddInclusiveEnd Enddatum (inklusive) im Kerio-Format
+     * @return UTC-Millis (00:00 des Folgetags)
      */
     private static long parseKerioDateOnlyEndExclusiveUtcMillis(String yyyymmddInclusiveEnd) {
         LocalDate d = LocalDate.parse(yyyymmddInclusiveEnd, KERIO_DATE_ONLY_FORMAT);
@@ -1534,7 +1658,9 @@ public class KerioApiClient {
     }
 
     /**
-     * Format yyyyMMdd aus UTC-Millis (nimmt das UTC-Datum).
+     * @brief Formatiert UTC-Millis als Kerio Date-only (yyyyMMdd).
+     * @param utcMillis UTC-Millis
+     * @return yyyyMMdd String
      */
     private static String formatKerioDateOnlyFromUtcMillis(long utcMillis) {
         LocalDate d = Instant.ofEpochMilli(utcMillis).atZone(ZoneOffset.UTC).toLocalDate();
@@ -1542,8 +1668,11 @@ public class KerioApiClient {
     }
 
     /**
-     * Android liefert bei All-Day DTEND EXKLUSIV.
-     * Kerio erwartet bei Date-only hier INKLUSIV -> also ein Tag zurück.
+     * @brief Konvertiert Android-All-Day DTEND (exklusiv) zu Kerio Date-only
+     *        (inklusiv).
+     * @param dtEndExclusiveUtcMillis Android DTEND (exklusiv, UTC-Millis)
+     * @param dtStartUtcMillis        DTSTART (UTC-Millis) für Sicherheits-Clamp
+     * @return Kerio Date-only Enddatum (inklusive)
      */
     private static String formatKerioInclusiveEndDateOnlyFromAndroidExclusiveEnd(long dtEndExclusiveUtcMillis,
             long dtStartUtcMillis) {
@@ -1643,14 +1772,11 @@ public class KerioApiClient {
     }
 
     /**
-     * Liefert alle Kontakt-Ordner (Adressbücher) inkl. Public + Shared (wenn vom
-     * Server unterstützt).
+     * @brief Holt Kontakt-Ordner (eigene/Public/Shared) best-effort.
      *
-     * Wichtig:
-     * - Kerio-Versionen variieren stark: manche liefern Kontakt-Ordner in
-     * Folders.get,
-     * andere nur über SharedMailboxList/Public.
-     * - Wir versuchen daher "best effort": Fehler einzelner Calls sind nicht fatal.
+     *        Kerio-Versionen variieren stark (Folders.get vs. SharedMailboxList
+     *        vs. Public). Fehler einzelner Calls sind nicht fatal.
+     * @return Liste RemoteContactFolder
      */
     public java.util.List<RemoteContactFolder> fetchContactFolders()
             throws java.io.IOException, org.json.JSONException {
@@ -1695,6 +1821,15 @@ public class KerioApiClient {
         return new java.util.ArrayList<>(byId.values());
     }
 
+    /**
+     * @brief Übernimmt Kontakt-Ordner aus Folders.get/… in die Map.
+     * @param resp             JSON-Antwort
+     * @param byId             Ziel-Map
+     * @param isPublic         Flag Public
+     * @param isShared         Flag Shared
+     * @param forcedOwnerName  Optionaler Owner-Name
+     * @param forcedOwnerEmail Optionaler Owner-E-Mail
+     */
     private void addContactFoldersFromFolderResult(org.json.JSONObject resp,
             java.util.Map<String, RemoteContactFolder> byId,
             boolean isPublic,
@@ -1775,6 +1910,11 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Extrahiert Kontakt-Ordner aus Folders.getSharedMailboxList.
+     * @param resp JSON-Antwort
+     * @param byId Ziel-Map
+     */
     private void addContactFoldersFromSharedMailboxListResult(org.json.JSONObject resp,
             java.util.Map<String, RemoteContactFolder> byId) throws org.json.JSONException {
 
@@ -1847,6 +1987,15 @@ public class KerioApiClient {
         }
     }
 
+    /**
+     * @brief Wandelt ein Kerio Folder-Objekt in RemoteContactFolder um.
+     * @param folder           Kerio Folder-Objekt
+     * @param isPublic         Flag Public
+     * @param isShared         Flag Shared
+     * @param forcedOwnerName  Optionaler Owner-Name
+     * @param forcedOwnerEmail Optionaler Owner-E-Mail
+     * @return RemoteContactFolder oder null bei nicht-Kontakt-Ordner
+     */
     private RemoteContactFolder folderToRemoteContactFolder(org.json.JSONObject folder,
             boolean isPublic,
             boolean isShared,
@@ -1916,10 +2065,10 @@ public class KerioApiClient {
     }
 
     /**
-     * Lädt Kontakte aus Kerio.
-     *
-     * @param folderIds Optional. Wenn null/leer, werden Kontakt-Ordner via
-     *                  Folders.get/Public/SharedMailboxList automatisch ermittelt.
+     * @brief Lädt Kontakte aus Kerio.
+     * @param folderIds Optional: spezifische Folder-IDs, sonst werden alle
+     *                  Kontakt-Ordner ermittelt.
+     * @return Liste RemoteContact
      */
     public java.util.List<RemoteContact> fetchContacts(java.util.List<String> folderIds)
             throws java.io.IOException, org.json.JSONException {
