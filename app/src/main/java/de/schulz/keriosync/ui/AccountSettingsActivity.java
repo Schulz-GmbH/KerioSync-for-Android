@@ -23,6 +23,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import de.schulz.keriosync.BuildConfig;
 import de.schulz.keriosync.R;
 import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.sync.KerioSyncScheduler;
@@ -93,6 +94,17 @@ public class AccountSettingsActivity extends AppCompatActivity {
         chkInstantSyncEnabled = findViewById(R.id.chkInstantSyncEnabled);
         edtInstantUpdateDelaySeconds = findViewById(R.id.edtInstantUpdateDelaySeconds);
         edtInstantMaxDelaySeconds = findViewById(R.id.edtInstantMaxDelaySeconds);
+
+        boolean hasExistingAccount = checkIfAccountExists();
+
+        if (BuildConfig.DEV_PRESET_VALUES && !hasExistingAccount) {
+            if (!BuildConfig.DEV_SERVER_URL.isEmpty())
+                edtServerUrl.setText(BuildConfig.DEV_SERVER_URL);
+            if (!BuildConfig.DEV_USERNAME.isEmpty())
+                edtUsername.setText(BuildConfig.DEV_USERNAME);
+            if (!BuildConfig.DEV_PASSWORD.isEmpty())
+                edtPassword.setText(BuildConfig.DEV_PASSWORD);
+        }
 
         // *** WICHTIG: Runtime-Permissions sicherstellen ***
         ensureRequiredPermissions();
@@ -449,6 +461,18 @@ public class AccountSettingsActivity extends AppCompatActivity {
         return hasReadCalendar && hasWriteCalendar
                 && hasReadContacts && hasWriteContacts
                 && hasGetAccounts;
+    }
+
+    /**
+     * Prüft, ob wir gerade ein existierendes Konto bearbeiten.
+     * - Wenn mIsNewAccount=false -> Update-Modus
+     * - Wenn mExistingAccount != null -> konkretes Konto geladen
+     *
+     * Zweck: DEV-Defaultwerte dürfen keine realen Kontodaten überschreiben.
+     */
+    private boolean checkIfAccountExists() {
+        if (!mIsNewAccount) return true;
+        return mExistingAccount != null;
     }
 
     /**

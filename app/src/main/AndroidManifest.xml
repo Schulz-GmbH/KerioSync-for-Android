@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="de.schulz.keriosync">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Berechtigungen für Accounts, Kalender und Netzwerk -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -67,6 +66,7 @@
                 android:name="android.content.SyncAdapter"
                 android:resource="@xml/sync_contacts" />
         </service>
+
         <!-- JobService: lauscht auf CalendarProvider Änderungen (Instant Sync bei lokalen Änderungen) -->
         <service
             android:name=".sync.KerioCalendarChangeJobService"
@@ -91,15 +91,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- Account Settings Activity -->
+        <!-- Account Settings Activity (NICHT als Launcher!) -->
         <activity
             android:name=".ui.AccountSettingsActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="true" />
 
     </application>
 </manifest>
