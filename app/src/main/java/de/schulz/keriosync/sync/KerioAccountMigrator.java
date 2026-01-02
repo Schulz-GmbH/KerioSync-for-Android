@@ -1,4 +1,11 @@
-// ===== app/src/main/java/de/schulz/keriosync/sync/KerioAccountMigrator.java =====
+/**
+ * @file KerioAccountMigrator.java
+ * @brief Migrationstool für bestehende Kerio-Accounts (alte Versionen -> neue UserData-Keys)
+ *
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ */
 package de.schulz.keriosync.sync;
 
 import android.accounts.Account;
@@ -10,21 +17,30 @@ import android.util.Log;
 import de.schulz.keriosync.auth.KerioAccountConstants;
 
 /**
- * Migriert/aktualisiert bestehende KerioSync-Accounts, die in älteren App-Versionen
- * angelegt wurden und noch keine neuen UserData-Keys (Sync Settings) besitzen.
- *
- * Wichtig:
- * - Wird beim Service-Start und Boot/Update ausgeführt,
- *   damit Periodic Sync auch ohne UI korrekt gesetzt wird.
+ * @class KerioAccountMigrator
+ * @brief Migriert/aktualisiert bestehende Kerio-Accounts mit fehlenden
+ *        Sync-Settings.
+ *        Accounts aus älteren App-Versionen besitzen oft noch keine
+ *        UserData-Keys
+ *        für Periodic-/Instant-Sync-Einstellungen. Diese werden hier mit
+ *        sinnvollen
+ *        Defaults befüllt, damit Sync ohne UI-Eingabe funktioniert.
+ *        Wird beim Service-Start und Boot/Update automatisch ausgeführt.
  */
 public final class KerioAccountMigrator {
 
     private static final String TAG = "KerioAccountMigrator";
 
-    private KerioAccountMigrator() { }
+    /**
+     * @brief Privater Konstruktor (Utility-Klasse).
+     */
+    private KerioAccountMigrator() {
+    }
 
     /**
-     * Setzt fehlende Default-Keys für alle Kerio-Accounts und wendet Scheduler an.
+     * @brief Migriert alle Kerio-Accounts: setzt fehlende UserData-Defaults und
+     *        wendet Scheduler an.
+     * @param context App-Kontext
      */
     public static void migrateAllAccounts(Context context) {
         try {
@@ -37,6 +53,13 @@ public final class KerioAccountMigrator {
                 migrateAccount(context, am, account);
             }
         } catch (Exception e) {
+            /**
+             * @brief Migriert einen einzelnen Account: Setzt fehlende UserData-Keys und
+             *        wendet Scheduler an.
+             * @param context App-Kontext
+             * @param am      AccountManager
+             * @param account Zu migrierender Kerio-Account
+             */
             Log.e(TAG, "migrateAllAccounts() Fehler: " + e.getMessage(), e);
         }
     }

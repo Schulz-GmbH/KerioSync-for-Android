@@ -1,3 +1,11 @@
+/**
+ * @file    KerioContactsSyncAdapter.java
+ * @brief   SyncAdapter für bidirektionale Kontaktsynchronisation zwischen Kerio Connect und Android ContactsProvider
+ * @author  Kerio Sync Team
+ * @date    2025
+ * @version 1.0
+ */
+
 package de.schulz.keriosync.sync;
 
 import android.Manifest;
@@ -38,21 +46,35 @@ import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.net.KerioApiClient;
 
 /**
- * SyncAdapter für Kerio Kontakte -> Android ContactsProvider.
+ * @class KerioContactsSyncAdapter
+ * @brief AbstractThreadedSyncAdapter für Kerio Kontakte <-> Android
+ *        ContactsProvider
+ *        Synchronisiert Kontakte vom Kerio-Server mit dem Android
+ *        ContactsProvider:
+ * 
+ *        **Funktionalität:**
+ *        - Ruft Remote-Kontakte vom Kerio-Server ab
+ *        (KerioApiClient.fetchContacts)
+ *        - Erstellt lokale RawContacts und Data Rows (StructuredName, Emails,
+ *        Phones)
+ *        - Bildet Kerio-Adressbücher auf ContactsContract.Groups ab
+ *        - Aktualisiert/löscht lokale Kontakte bei Änderungen auf dem Server
+ *        - Stellt Account-Sichtbarkeit in OEM Kontakte-Apps (Samsung) sicher
  *
- * Ziel:
- * - Kerio Addressbooks/Ordner als Kontakte-Gruppen abbilden
- * - Kontakte als RawContacts + Data Rows speichern
- * - Sichtbarkeit in OEM Kontakte-Apps (Samsung) sicherstellen
+ *        **Wichtig:**
+ *        - Benötigt READ_CONTACTS und WRITE_CONTACTS Permissions
+ *        - In res/xml/sync_contacts.xml:
+ *        android:contentAuthority="com.android.contacts"
+ *        - Im Manifest: android.permission.BIND_SYNC_ADAPTER für den
+ *        Sync-Service
+ *        - Optional (für OEM-Integration): android.provider.CONTACTS_STRUCTURE
+ *        Metadaten
  *
- * Wichtig:
- * - In res/xml/sync_contacts.xml muss
- * android:contentAuthority="com.android.contacts" stehen
- * - Im Manifest muss der Sync-Service android.permission.BIND_SYNC_ADAPTER
- * haben
- * - Optional (aber wichtig bei OEMs): android.provider.CONTACTS_STRUCTURE
- * meta-data
- * damit die Kontakte-App Feld-Strukturen kennt.
+ *        **Kontakt-Struktur:**
+ *        - folderId:contactId als SOURCE_ID (eindeutig)
+ *        - SYNC1 = folderId, SYNC2 = folderName (für Folder-Tracking)
+ *        - Data Rows mit MIMETYPE (StructuredName, Email, Phone,
+ *        GroupMembership)
  */
 public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
 
@@ -67,6 +89,29 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         this.mContentResolver = context.getContentResolver();
     }
 
+    /**
+     * @brief Führt die bidirektionale Kontaktsynchronisation durch
+     *
+     *        **Ablauf:**
+     *        1. Validiert Account, Permissions und Account-Settings (serverUrl,
+     *        username, password)
+     *        2. Erstellt KerioApiClient mit SSL-Einstellungen (Custom CA /
+     *        Zertifikat vertrauen)
+     *        3. Ruft Remote-Kontakte ab
+     *        4. Stellt Account-Sichtbarkeit sicher (ensureAccountSettingsVisible)
+     *        5. Erstellt/aktualisiert Gruppen für Kerio-Adressbücher (ensureGroups)
+     *        6. Synchronisiert lokale RawContacts (Insert/Update/Delete)
+     *        7. Protokolliert Synchronisierungsergebnis
+     *
+     * @param account    Das zu synchronisierende Android-Account (Kerio-Account)
+     * @param extras     Sync-Optionen (optional, z.B. Sync-Trigger)
+     * @param authority  Content Provider Authority ("com.android.contacts")
+     * @param provider   ContentProviderClient (optional)
+     * @param syncResult Ergebnis-Objekt für Fehlerbehandlung (stats/exceptions)
+     *
+     * @return void. Aktualisiert syncResult bei Fehlern (numAuthExceptions,
+     *         numIoExceptions, numParseExceptions)
+     */
     @Override
     public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider,
             SyncResult syncResult) {
@@ -194,6 +239,10 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
+    /**
+     * @brief Prüft, ob READ_CONTACTS und WRITE_CONTACTS erteilt wurden
+     * @return true, wenn beide Permissions vorhanden; false sonst
+     */
     private boolean hasContactsPermissions() {
         return ContextCompat.checkSelfPermission(getContext(),
                 Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
@@ -201,19 +250,32 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
                         Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED;
     }
 
+    /**
+     * @brief Erzeugt eine SyncAdapter-URI ohne Account-Parameter
+     * @param uri Basis-URI
+     * @return SyncAdapter-URI mit CALLER_IS_SYNCADAPTER=true, ohne Account-Info
+     */
     private Uri asSyncAdapter(Uri uri) {
         return asSyncAdapter(uri, null);
     }
 
     /**
-     * Erzeugt eine SyncAdapter-URI und setzt zusätzlich Account-Query-Parameter.
+     * @brief Erzeugt eine SyncAdapter-URI mit vollständigen
+     *        Account-Query-Parametern
      *
-     * Hintergrund:
-     * Einige Provider-Implementierungen (v.a. OEMs wie Samsung) verhalten sich je
-     * nach Query-Parametern unterschiedlich.
-     * Wenn ACCOUNT_NAME/ACCOUNT_TYPE fehlen, werden u.U. Gruppen/Settings nicht
-     * korrekt dem Account zugeordnet oder die
-     * Anzeige/Filterung in der Kontakte-App ist inkonsistent.
+     *        **Grund:**
+     *        Einige OEM-Provider-Implementierungen (z.B. Samsung Kontakte)
+     *        unterscheiden zwischen:
+     *        - SyncAdapter-Zugriffe (CALLER_IS_SYNCADAPTER=true)
+     *        - Account-Zuordnung (ACCOUNT_NAME, ACCOUNT_TYPE)
+     *
+     *        Fehlen diese Parameter, können Gruppen/Settings nicht korrekt
+     *        zugeordnet oder
+     *        in der Kontakte-App nicht angezeigt werden.
+     *
+     * @param uri     Content Provider URI
+     * @param account Account mit name/type (null = nur CALLER_IS_SYNCADAPTER)
+     * @return Uri.Builder-Ergebnis mit Query-Parametern
      */
     private Uri asSyncAdapter(Uri uri, Account account) {
         Uri.Builder b = uri.buildUpon()
@@ -228,22 +290,25 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
     }
 
     /**
-     * Stellt sicher, dass der Account in
-     * {@link android.provider.ContactsContract.Settings}
-     * als sichtbar markiert ist.
+     * @brief Stellt sicher, dass der Account in ContactsContract.Settings sichtbar
+     *        ist
      *
-     * Hintergrund (Samsung/OEM):
-     * Viele Kontakte-Apps bauen den Quellen-Filter ("Alle Kontakte / Telefon /
-     * Google / ...")
-     * unter anderem aus ContactsContract.Settings. Fehlt dort ein Eintrag mit
-     * UNGROUPED_VISIBLE=1, wird der Account zwar synchronisiert, aber nicht als
-     * Quelle
-     * zur Auswahl angeboten.
+     *        **Grund (Samsung/OEM-Integration):**
+     *        Viele OEM Kontakte-Apps bauen den Quellen-Filter ("Alle Kontakte /
+     *        Telefon / Google / ...")
+     *        aus ContactsContract.Settings. Fehlt ein Eintrag mit
+     *        UNGROUPED_VISIBLE=1 und SHOULD_SYNC=1,
+     *        wird der Account zwar synchronisiert, aber nicht als Quelle zur
+     *        Auswahl angeboten.
      *
-     * WICHTIG:
-     * - Die Kombination (ACCOUNT_NAME, ACCOUNT_TYPE, DATA_SET) ist eindeutig.
-     * - Wir arbeiten immer mit DATA_SET=NULL, damit keine "wachsenden" Duplikate
-     * entstehen.
+     *        **Logik:**
+     *        - Prüft existierenden Settings-Eintrag für (ACCOUNT_NAME,
+     *        ACCOUNT_TYPE, DATA_SET=NULL)
+     *        - Falls vorhanden: Updated auf UNGROUPED_VISIBLE=1, SHOULD_SYNC=1
+     *        - Falls nicht vorhanden: Erstellt neue Settings-Zeile
+     *
+     * @param account Kerio-Account, für den Settings sichtbar gemacht werden sollen
+     * @return void
      */
     private void ensureAccountSettingsVisible(Account account) {
         ContentResolver resolver = mContext.getContentResolver();
@@ -303,10 +368,23 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
     }
 
     /**
-     * Erstellt/aktualisiert {@link ContactsContract.Groups} für die auf dem Server
-     * vorhandenen Kontakt-Ordner (Adressbücher).
+     * @brief Erstellt/aktualisiert ContactsContract.Groups für Kerio-Adressbücher
      *
-     * @return Map folderId -> groupRowId
+     *        **Funktion:**
+     *        - Extrakt eindeutige Kerio-Ordner (folderId) aus Remote-Kontakten
+     *        - Prüft existierende Groups mit SOURCE_ID = folderId
+     *        - Erstellt neue Groups falls nicht vorhanden
+     *        - Aktualisiert Titel (TITLE) falls geändert
+     *        - Setzt GROUP_VISIBLE=1 zur OEM-Integration
+     *
+     *        **Rückgabe:**
+     *        Map folderId -> groupRowId für ensureGroups-Zuordnung in Data Rows
+     *
+     * @param account        Kerio-Account
+     * @param remoteContacts Liste der Remote-Kontakte von Kerio (zur
+     *                       Folder-Extraktion)
+     * @return Map<String, Long> folderId -> groupRowId (empty wenn keine Ordner
+     *         vorhanden)
      */
     private Map<String, Long> ensureGroups(Account account, List<KerioApiClient.RemoteContact> remoteContacts) {
         Map<String, String> folderNames = new HashMap<>();
@@ -415,6 +493,18 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         return out;
     }
 
+    /**
+     * @brief Lädt existierende lokale RawContacts für einen Account
+     *
+     *        **Funktion:**
+     *        - Queried RawContacts mit ACCOUNT_NAME/ACCOUNT_TYPE = Account
+     *        - Filtert auf SOURCE_ID IS NOT NULL und DELETED=0
+     *        - Erzeugt Map SOURCE_ID -> RAW_CONTACT_ID für Conflict-Detection in
+     *        onPerformSync
+     *
+     * @param account Kerio-Account
+     * @return Map<String, Long> sourceId -> rawContactId (empty bei Fehler)
+     */
     private Map<String, Long> loadLocalRawContacts(Account account) {
         Map<String, Long> map = new HashMap<>();
 
@@ -462,6 +552,22 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         return map;
     }
 
+    /**
+     * @brief Erstellt einen neuen RawContact mit zugehörigen Data Rows
+     *
+     *        **Ablauf:**
+     *        1. RawContact mit ACCOUNT_NAME/ACCOUNT_TYPE/SOURCE_ID einfügen
+     *        2. Data Rows (Name, Emails, Phones, GroupMembership) mit BackReference
+     *        auf RawContact #0 hinzufügen
+     *        3. applyBatch() ausführen (atomare Operation)
+     *        4. RawContact-ID via SOURCE_ID nachschlagen (robuste ID-Rückgabe)
+     *
+     * @param account    Kerio-Account
+     * @param sourceId   Eindeutige SOURCE_ID (folderId:contactId)
+     * @param rc         Remote-Kontakt von Kerio
+     * @param groupRowId Group-Row-ID für GroupMembership (null = keine Zuordnung)
+     * @return RawContact-ID nach Insert, oder null bei Fehler
+     */
     private Long insertRawContact(Account account, String sourceId, KerioApiClient.RemoteContact rc, Long groupRowId)
             throws RemoteException, OperationApplicationException {
 
@@ -486,6 +592,23 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         return after.get(sourceId);
     }
 
+    /**
+     * @brief Aktualisiert einen existierenden RawContact und zugehörige Data Rows
+     *
+     *        **Ablauf:**
+     *        1. RawContact-Metadaten (SYNC1=folderId, SYNC2=folderName)
+     *        aktualisieren
+     *        2. Alle bestehenden Data Rows löschen (RAW_CONTACT_ID = rawContactId)
+     *        3. Neue Data Rows (Name, Emails, Phones, GroupMembership) einfügen
+     *        4. applyBatch() ausführen (atomare Operation)
+     *
+     * @param account      Kerio-Account
+     * @param rawContactId RAW_CONTACT_ID des zu aktualisierenden Kontakts
+     * @param rc           Aktualisierte Remote-Kontakt-Daten
+     * @param groupRowId   Group-Row-ID für neue GroupMembership (null = keine
+     *                     Zuordnung)
+     * @return void
+     */
     private void updateRawContact(Account account, long rawContactId, KerioApiClient.RemoteContact rc, Long groupRowId)
             throws RemoteException, OperationApplicationException {
 
@@ -511,13 +634,28 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
     }
 
     /**
-     * Baut Data-Operationen (StructuredName, Emails, Phones, GroupMembership) für
-     * einen Kontakt.
+     * @brief Erstellt Data-Row-Operationen für einen Kontakt
      *
-     * @param ops               Liste, in die neue Ops geschrieben werden
-     * @param rawContactRefOrId Entweder BackReference-Index (bei Insert) oder echte
+     *        **Erzeugte Data-Typen:**
+     *        - StructuredName: DISPLAY_NAME, GIVEN_NAME, MIDDLE_NAME, FAMILY_NAME
+     *        - Email: ADDRESS (TYPE=TYPE_OTHER)
+     *        - Phone: NUMBER (TYPE=TYPE_OTHER)
+     *        - GroupMembership: GROUP_ROW_ID (falls groupRowId vorhanden)
+     *
+     *        **Adressierung:**
+     *        - Bei Insert (rawContactRefOrId=0): withValueBackReference auf
+     *        RawContact #0
+     *        - Bei Update (rawContactRefOrId>0): withValue für echte RawContact-ID
+     *
+     * @param account           Kerio-Account
+     * @param ops               ArrayList für neue ContentProviderOperations
+     * @param rawContactRefOrId BackReference-Index (0 bei Insert) oder
      *                          RawContact-ID (bei Update)
-     * @param rc                Remote-Kontakt
+     * @param rc                Remote-Kontakt mit Daten (firstName, surName,
+     *                          emails, phones, ...)
+     * @param groupRowId        Group-Row-ID für GroupMembership (null = nicht
+     *                          setzen)
+     * @return void. Ops werden direkt in ArrayList manipuliert.
      */
     private void buildDataOpsForContact(Account account,
             ArrayList<ContentProviderOperation> ops,
@@ -622,6 +760,18 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
+    /**
+     * @brief Löscht einen RawContact und alle zugehörigen Data Rows
+     *
+     *        **Funktion:**
+     *        - Konstruiert URI: RawContacts.CONTENT_URI/rawContactId
+     *        - Führt delete() aus mit SyncAdapter-Parametern
+     *        - ContentResolver löscht kaskadierend alle Data Rows (automatisch)
+     *
+     * @param account      Kerio-Account
+     * @param rawContactId RAW_CONTACT_ID des zu löschenden Kontakts
+     * @return true wenn ≥1 Zeile gelöscht; false bei Fehler/Keine Treffer
+     */
     private boolean deleteRawContact(Account account, long rawContactId) {
         try {
             Uri uri = ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, rawContactId);
@@ -634,9 +784,19 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
     }
 
     /**
-     * Baut eine stabile, eindeutige SOURCE_ID für Android RawContacts.
+     * @brief Erzeugt stabile, eindeutige SOURCE_ID für RawContacts
      *
-     * Format: <folderId>:<contactId>
+     *        **Format:** folderId:contactId
+     *
+     *        **Grund:**
+     *        - Kerio-Kontakte sind eindeutig durch (folderId, contactId)
+     *        identifizierbar
+     *        - Android RawContacts benötigen eine eindeutige SOURCE_ID pro Account
+     *        - Diese ID ist stabil über Multiple Syncs hinweg (robuste
+     *        Konflikt-Detection)
+     *
+     * @param rc Remote-Kontakt
+     * @return SOURCE_ID als String (leere Teile möglich wenn null)
      */
     private String buildSourceId(KerioApiClient.RemoteContact rc) {
         String fid = (rc != null) ? rc.folderId : null;
@@ -648,6 +808,11 @@ public class KerioContactsSyncAdapter extends AbstractThreadedSyncAdapter {
         return fid + ":" + cid;
     }
 
+    /**
+     * @brief Hilfsmethode: Null-safe String trim()
+     * @param s Eingabe-String (null möglich)
+     * @return Trimmed String oder "" bei null
+     */
     private String safe(String s) {
         return (s == null) ? "" : s.trim();
     }

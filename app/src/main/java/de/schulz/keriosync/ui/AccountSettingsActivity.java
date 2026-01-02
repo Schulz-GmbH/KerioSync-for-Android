@@ -1,3 +1,27 @@
+/**
+ * @file AccountSettingsActivity.java
+ * @brief UI-Activity für Kerio-Kontoeinstellungen und Synchronisierungskonfiguration
+ * @author Simon Schulz
+ * @date 2. Januar 2026
+ * @version 1.0
+ *
+ * Diese Activity verwaltet die Benutzeroberfläche für:
+ * - Kontoerstellung und -verwaltung (Server-URL, Benutzername, Passwort)
+ * - SSL/TLS-Zertifikatsoptionen (Standard-CA oder benutzerdefinierte CA)
+ * - Synchronisierungseinstellungen (Periodische und Sofort-Sync mit Intervallen)
+ * - Runtime-Permissions für Kalender, Kontakte und Account-Manager
+ *
+ * Die Activity wird über zwei Wege aufgerufen:
+ * 1. Direkt vom App-Icon (Kontoeinstellungen öffnen)
+ * 2. Vom KerioAccountAuthenticator (Neue Kontos während Authentifizierung)
+ *
+ * Workflow:
+ * - onCreate(): UI-Initialisierung, Account-Daten laden, Permissions prüfen
+ * - saveAccount(): Validierung und Speicherung der Kontodaten in AccountManager
+ * - KerioSyncScheduler.applyAll(): Aktiviert Periodic/Instant Sync basierend auf UI-Einstellungen
+ * - Runtime-Permission-Handling: Veranlasst den Sync erst nach Permission-Gewährung
+ */
+
 package de.schulz.keriosync.ui;
 
 import android.Manifest;
@@ -29,11 +53,31 @@ import de.schulz.keriosync.auth.KerioAccountConstants;
 import de.schulz.keriosync.sync.KerioSyncScheduler;
 
 /**
- * Activity, in der der Benutzer die Kerio-Account-Daten eingibt
- * (Server-URL, Benutzername, Passwort, SSL-Optionen, Permissions).
+ * @class AccountSettingsActivity
+ * @brief UI-Activity für Kerio-Kontoeinstellungen und
+ *        Synchronisierungskonfiguration
  *
- * Diese Activity wird sowohl direkt (App-Icon) als auch
- * über den AccountAuthenticator aufgerufen.
+ *        Diese Activity verwaltet die Benutzeroberfläche für:
+ *        - Kontoerstellung und -verwaltung (Server-URL, Benutzername, Passwort)
+ *        - SSL/TLS-Zertifikatsoptionen (Standard-CA oder benutzerdefinierte CA)
+ *        - Synchronisierungseinstellungen (Periodische und Sofort-Sync mit
+ *        Intervallen)
+ *        - Runtime-Permissions für Kalender, Kontakte und Account-Manager
+ *
+ *        Die Activity wird über zwei Wege aufgerufen:
+ *        1. Direkt vom App-Icon (Kontoeinstellungen öffnen)
+ *        2. Vom KerioAccountAuthenticator (Neue Kontos während
+ *        Authentifizierung)
+ *
+ *        Workflow:
+ *        - onCreate(): UI-Initialisierung, Account-Daten laden, Permissions
+ *        prüfen
+ *        - saveAccount(): Validierung und Speicherung der Kontodaten in
+ *        AccountManager
+ *        - KerioSyncScheduler.applyAll(): Aktiviert Periodic/Instant Sync
+ *        basierend auf UI-Einstellungen
+ *        - Runtime-Permission-Handling: Veranlasst den Sync erst nach
+ *        Permission-Gewährung
  */
 public class AccountSettingsActivity extends AppCompatActivity {
 
@@ -75,6 +119,26 @@ public class AccountSettingsActivity extends AppCompatActivity {
 
     private Uri mSelectedCaUri = null;
 
+    /**
+     * @brief Initialisiert die Activity mit UI-Komponenten, Account-Daten und
+     *        Permissions
+     *        Dieser Lifecycle-Callback führt folgende Schritte durch:
+     *        1. Bindet alle UI-Komponenten (EditText, CheckBox, Button)
+     *        2. Prüft, ob ein bestehendes Konto bearbeitet wird, oder ein neues
+     *        erstellt wird
+     *        3. Lädt Account-Daten (Server-URL, Benutzername, SSL-Optionen) falls
+     *        vorhanden
+     *        4. Lädt Sync-Einstellungen (Periodisch/Sofort mit Intervallen) falls
+     *        vorhanden
+     *        5. Setzt Standard-Sync-Einstellungen für neue Kontos
+     *        6. Sichert Runtime-Permissions (READ/WRITE_CALENDAR,
+     *        READ/WRITE_CONTACTS, GET_ACCOUNTS)
+     *        7. Registriert Click-Listener für CA-Zertifikat und
+     *        Account-Speicherung
+     *
+     * @param savedInstanceState Bundle mit gespeicherten Activity-Zustand (kann
+     *                           null sein)
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -187,6 +251,14 @@ public class AccountSettingsActivity extends AppCompatActivity {
         btnSave.setOnClickListener(v -> saveAccount());
     }
 
+    /**
+     * @brief Setzt Standard-Synchronisierungseinstellungen für ein neues Konto
+     *        Wird aufgerufen, wenn ein neues Konto angelegt wird. Die Werte stammen
+     *        aus KerioSyncScheduler-Konstanten und repräsentieren folgende
+     *        Standardwerte:
+     *        - Periodischer Sync: Aktiviert, 15 Minuten Intervall
+     *        - Sofort-Sync: Aktiviert, 5 Sekunden Verzögerung, 30 Sekunden Maximum
+     */
     private void setDefaultSyncSettings() {
         chkPeriodicSyncEnabled.setChecked(KerioSyncScheduler.DEFAULT_PERIODIC_ENABLED);
         edtPeriodicMinutes.setText(String.valueOf(KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES));
@@ -196,6 +268,24 @@ public class AccountSettingsActivity extends AppCompatActivity {
         edtInstantMaxDelaySeconds.setText(String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS));
     }
 
+    /**
+     * @brief Lädt gespeicherte Synchronisierungseinstellungen aus dem
+     *        AccountManager
+     *        Liest die folgenden UserData-Felder:
+     *        - KEY_PERIODIC_SYNC_ENABLED: "1" oder "0" (aktiviert/deaktiviert)
+     *        - KEY_SYNC_INTERVAL_MINUTES: Periodisches Sync-Intervall in Minuten
+     *        - KEY_INSTANT_SYNC_ENABLED: "1" oder "0" (aktiviert/deaktiviert)
+     *        - KEY_INSTANT_SYNC_UPDATE_DELAY_SECONDS: Verzögerung bis Sofort-Sync
+     *        in Sekunden
+     *        - KEY_INSTANT_SYNC_MAX_DELAY_SECONDS: Maximale Verzögerung für
+     *        Sofort-Sync
+     *
+     *        Fehlende Werte werden mit Standardwerten aus KerioSyncScheduler
+     *        gefüllt.
+     *
+     * @param am      AccountManager für UserData-Zugriff
+     * @param account Android-Account-Objekt mit gespeicherten Einstellungen
+     */
     private void loadSyncSettings(AccountManager am, Account account) {
         String periodicEnabled = am.getUserData(account, KerioAccountConstants.KEY_PERIODIC_SYNC_ENABLED);
         String intervalMin = am.getUserData(account, KerioAccountConstants.KEY_SYNC_INTERVAL_MINUTES);
@@ -218,6 +308,13 @@ public class AccountSettingsActivity extends AppCompatActivity {
                         : maxDelay);
     }
 
+    /**
+     * @brief Parst einen String in Integer mit Fallback auf Defaultwert
+     *
+     * @param val String-Wert zum Parsen (kann null oder leer sein)
+     * @param def Fallback-Wert bei Parsing-Fehler oder null-Input
+     * @return Geparster Integer-Wert oder def bei Fehler
+     */
     private int parseIntOrDefault(String val, int def) {
         try {
             if (val == null)
@@ -228,6 +325,19 @@ public class AccountSettingsActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * @brief Öffnet einen Datei-Picker zum Auswählen eines CA-Zertifikats
+     *        Stellt ACTION_OPEN_DOCUMENT-Intent bereit mit Unterstützung für:
+     *        - application/x-x509-ca-cert
+     *        - application/x-x509-user-cert
+     *        - application/pkix-cert
+     *        - application/octet-stream (generisches Fallback)
+     *
+     *        Geht davon aus, dass das System eine Datei-App zur Auswahl
+     *        bereitstellt.
+     *        Ergebnis wird in onActivityResult() mit requestCode REQ_PICK_CA_CERT
+     *        verarbeitet.
+     */
     private void openCaPicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -245,6 +355,23 @@ public class AccountSettingsActivity extends AppCompatActivity {
         startActivityForResult(intent, REQ_PICK_CA_CERT);
     }
 
+    /**
+     * @brief Verarbeitet das Ergebnis der CA-Zertifikat-Dateiauswahl
+     *
+     *        Wird aufgerufen, nachdem der Benutzer eine Datei im Datei-Picker
+     *        gewählt hat.
+     *        Wenn Dateiauswahl erfolgreich war (resultCode==RESULT_OK):
+     *        1. Liest Uri aus Intent-Daten
+     *        2. Versucht persistable URI-Permission zu setzen (für Zugriff über
+     *        Neustarts)
+     *        3. Speichert Uri in mSelectedCaUri
+     *        4. Aktualisiert CA-Info-Anzeige in UI
+     *
+     * @param requestCode Request-Identifikator (wird mit REQ_PICK_CA_CERT
+     *                    verglichen)
+     * @param resultCode  Activity-Ergebnis-Code (RESULT_OK bei Erfolg)
+     * @param data        Intent mit Datei-Uri im Intent.getData()
+     */
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -271,6 +398,17 @@ public class AccountSettingsActivity extends AppCompatActivity {
     // Account-Speicherung
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Protokolliert alle vorhandenen Kerio-Accounts für Debugging
+     *
+     *        Gibt eine formatierte Liste aller registrierten Kerio-Accounts an
+     *        Logcat aus.
+     *        Nützlich für Debugging von Account-Management-Problemen.
+     *
+     * @param accountManager AccountManager-Instanz für Account-Abfrage
+     * @param context        Kontextstring für Log-Überschrift (z.B. "vor
+     *                       saveAccount()")
+     */
     private void logExistingKerioAccounts(AccountManager accountManager, String context) {
         Account[] accounts = accountManager.getAccountsByType(KerioAccountConstants.ACCOUNT_TYPE);
         Log.d(TAG, "===== Kerio-Accounts (" + context + ") =====");
@@ -281,6 +419,27 @@ public class AccountSettingsActivity extends AppCompatActivity {
         Log.d(TAG, "=====================================");
     }
 
+    /**
+     * @brief Validiert und speichert die Kerio-Kontodaten im AccountManager
+     *        Dieser zentrale Callback führt folgende Schritte durch:
+     *        1. Liest alle UI-Feldwerte aus (Server-URL, Benutzername, Passwort,
+     *        SSL, Sync-Einstellungen)
+     *        2. Validiert erforderliche Felder (Server-URL, Benutzername, Passwort)
+     *        3. Validiert und korrigiert Sync-Einstellungen (Minimum 15 Minuten
+     *        periodisch)
+     *        4. Erstellt oder aktualisiert Account im AccountManager mit UserData
+     *        5. Prüft Runtime-Permissions:
+     *        - Falls erteilt: Ruft KerioSyncScheduler.applyAll() auf und beendet
+     *        Activity
+     *        - Falls fehlend: Setzt mPendingApplySchedulerAccount und fordert
+     *        Permissions an
+     *        6. Nach Permission-Grant: Completes save via completeSaveAndFinish()
+     *
+     *        Fehlerbehandlung:
+     *        - Leere Felder: Zeigt Fehler im EditText und requestFocus()
+     *        - Account-Duplikate: Zeigt Toast und beendet Activity
+     *        - Permission-Fehler: Zeigt Toast und blockiert Sync-Aktivierung
+     */
     private void saveAccount() {
         String serverUrl = edtServerUrl.getText().toString().trim();
         String username = edtUsername.getText().toString().trim();
@@ -412,6 +571,18 @@ public class AccountSettingsActivity extends AppCompatActivity {
 
     }
 
+    /**
+     * @brief Finalisiert Account-Speicherung und schließt Activity
+     *        Nach erfolgreichem KerioSyncScheduler.applyAll():
+     *        1. Protokolliert aktuelle Kerio-Accounts (Debugging)
+     *        2. Zeigt Erfolgs-Toast mit Account-Anzahl
+     *        3. Antwortet auf AccountAuthenticatorResponse (falls von
+     *        Authentifizierung aufgerufen)
+     *        4. Setzt RESULT_OK und beendet Activity
+     *
+     * @param accountManager AccountManager für Account-Abfrage und Logging
+     * @param account        Das gespeicherte/aktualisierte Account-Objekt
+     */
     private void completeSaveAndFinish(AccountManager accountManager, Account account) {
         logExistingKerioAccounts(accountManager, "nach saveAccount()");
 
@@ -437,8 +608,16 @@ public class AccountSettingsActivity extends AppCompatActivity {
     // ------------------------------------------------------------------------
 
     /**
-     * Stellt sicher, dass die App die benötigten Berechtigungen
-     * READ_CALENDAR, WRITE_CALENDAR und GET_ACCOUNTS zur Laufzeit hat.
+     * @brief Prüft ob alle erforderlichen Runtime-Permissions erteilt sind
+     *        Prüft folgende Permissions (ab Android 6.0 / API 23):
+     *        - READ_CALENDAR und WRITE_CALENDAR (für Kalender-Sync)
+     *        - READ_CONTACTS und WRITE_CONTACTS (für Kontakt-Sync)
+     *        - GET_ACCOUNTS (für Account-Manager-Zugriff)
+     *
+     *        Für API < 23 gibt diese Methode immer true zurück
+     *        (Manifest-Permissions sind auf älteren Versionen ausreichend).
+     *
+     * @return true wenn alle Permissions gewährt, false sonst
      */
     private boolean hasAllRequiredPermissions() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
@@ -464,29 +643,37 @@ public class AccountSettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * Prüft, ob wir gerade ein existierendes Konto bearbeiten.
-     * - Wenn mIsNewAccount=false -> Update-Modus
-     * - Wenn mExistingAccount != null -> konkretes Konto geladen
+     * @brief Prüft ob aktuell ein bestehendes Konto bearbeitet wird
+     *        Wird verwendet um zu verhindern, dass DEV-Preset-Werte (aus
+     *        BuildConfig)
+     *        bestehende Kontodaten überschreiben.
      *
-     * Zweck: DEV-Defaultwerte dürfen keine realen Kontodaten überschreiben.
+     * @return true wenn Bearbeitung eines existierenden Kontos, false für
+     *         Neuerstellung
      */
     private boolean checkIfAccountExists() {
-        if (!mIsNewAccount) return true;
+        if (!mIsNewAccount)
+            return true;
         return mExistingAccount != null;
     }
 
     /**
-     * Stellt sicher, dass die App die benötigten Berechtigungen
-     * READ/WRITE_CALENDAR, READ/WRITE_CONTACTS und GET_ACCOUNTS zur Laufzeit hat.
+     * @brief Fordert Runtime-Permissions an, falls nicht erteilt
+     *        Wichtig: Bei Sync-Adaptern versucht Android den jeweiligen Provider
+     *        (Kalender/Kontakte) zu öffnen, bevor onPerformSync() überhaupt läuft.
+     *        Fehlen die Runtime-Permissions, schlägt der Sync bereits in
+     *        SyncManager/
+     *        ContentProviderHelper mit "Permission Denial" fehl.
      *
-     * Wichtig: Bei Sync-Adaptern versucht Android den jeweiligen Provider
-     * (Kalender/Kontakte)
-     * zu öffnen, bevor onPerformSync() überhaupt läuft. Fehlen die
-     * Runtime-Permissions, schlägt
-     * der Sync bereits in SyncManager/ContentProviderHelper mit "Permission Denial"
-     * fehl.
-     * Deshalb müssen die Permissions vor dem Aktivieren/Anstoßen des Syncs erteilt
-     * sein.
+     *        Deshalb müssen die Permissions vor dem Aktivieren/Anstoßen des Syncs
+     *        erteilt sein.
+     *        Diese Methode:
+     *        1. Prüft hasAllRequiredPermissions()
+     *        2. Falls alle erteilt: LogCat-Info und Return
+     *        3. Falls fehlend: ActivityCompat.requestPermissions() mit
+     *        REQ_PERMISSIONS_ALL
+     *
+     *        Ergebnis wird in onRequestPermissionsResult() verarbeitet.
      */
     private void ensureRequiredPermissions() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
@@ -511,6 +698,22 @@ public class AccountSettingsActivity extends AppCompatActivity {
                 REQ_PERMISSIONS_ALL);
     }
 
+    /**
+     * @brief Verarbeitet das Ergebnis der Permission-Anfrage
+     *        Callback nach user-gesteuerte Permission-Dialog-Entscheidung:
+     *        1. Prüft ob alle Permissions in REQ_PERMISSIONS_ALL gewährt wurden
+     *        2. Falls ja:
+     *        - Zeigt Erfolgs-Toast
+     *        - Falls saveAccount() in mPendingApplySchedulerAccount wartet:
+     *        Ruft KerioSyncScheduler.applyAll() auf und completeSaveAndFinish()
+     *        3. Falls nein:
+     *        - Zeigt Fehler-Toast mit Hinweis auf erforderliche Permissions
+     *
+     * @param requestCode  Permission-Request-Identifikator (wird mit
+     *                     REQ_PERMISSIONS_ALL verglichen)
+     * @param permissions  Array der angeforderten Permissions
+     * @param grantResults Array der Grant-Ergebnisse pro Permission
+     */
     @Override
     public void onRequestPermissionsResult(int requestCode,
             @NonNull String[] permissions,
@@ -567,12 +770,29 @@ public class AccountSettingsActivity extends AppCompatActivity {
     // SSL / Zertifikats-UI
     // ------------------------------------------------------------------------
 
+    /**
+     * @brief Aktualisiert Aktivierungszustand der CA-Zertifikat-Kontrollen
+     *        Wenn "Trust All Certificates" aktiviert:
+     *        - CA-Picker-Button deaktiviert
+     *        - CA-Clearer-Button deaktiviert
+     *
+     *        Wenn "Trust All Certificates" deaktiviert:
+     *        - Beide Buttons aktiviert für benutzerdefinierte CA-Verwaltung
+     */
     private void updateCaControlsEnabled() {
         boolean trustAll = chkTrustAllCerts.isChecked();
         btnPickCustomCa.setEnabled(!trustAll);
         btnClearCustomCa.setEnabled(!trustAll);
     }
 
+    /**
+     * @brief Aktualisiert CA-Zertifikat-Info-Textanzeige
+     *        Zeigt entweder:
+     *        - Hinweis auf Verwendung von System-Zertifikatsspeicher (uri == null)
+     *        - Uri des ausgewählten benutzerdefinierten Zertifikats (uri != null)
+     *
+     * @param uri Uri des CA-Zertifikats oder null für System-Standard
+     */
     private void updateCaInfoText(@Nullable Uri uri) {
         if (uri == null) {
             txtCustomCaInfo

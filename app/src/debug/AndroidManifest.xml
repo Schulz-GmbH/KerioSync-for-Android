@@ -1,3 +1,19 @@
+<!--
+ * @file AndroidManifest.xml
+ * @brief Debug-Manifest für die KerioSync Android-Anwendung
+ * 
+ * Diese Manifest-Datei wird spezifisch für die Debug-Build-Variante der Anwendung verwendet.
+ * Sie enthält minimale Konfigurationen, die für Debug-Builds erforderlich sind.
+ * Die Hauptkonfiguration befindet sich in der main/AndroidManifest.xml.
+ * 
+ * @author Simon Marcel Linden
+ * @date 2026
+ * @version 0.9.8
+ * 
+ * @note Diese Datei wird nur während der Entwicklung und beim Debugging verwendet
+ * @see main/AndroidManifest.xml für die Haupt-Manifest-Konfiguration
+ -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Debug-spezifische Application-Konfiguration -->
     <application />
 </manifest>
