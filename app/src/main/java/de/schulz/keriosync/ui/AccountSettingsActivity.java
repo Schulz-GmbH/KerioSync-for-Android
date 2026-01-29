@@ -35,6 +35,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.MenuItem;
+import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -46,6 +48,10 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+
+import com.google.android.material.appbar.MaterialToolbar;
 
 import de.schulz.keriosync.BuildConfig;
 import de.schulz.keriosync.R;
@@ -144,6 +150,41 @@ public class AccountSettingsActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_account_settings);
 
+        // Toolbar statt ActionBar (Theme ist NoActionBar)
+        MaterialToolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle("Kerio Sync");
+        }
+
+        // WindowInsets: verhindert Überlappungen mit Statusbar / Navigationbar
+        View root = findViewById(R.id.root);
+        View appBar = findViewById(R.id.appBar);
+        View bottomBar = findViewById(R.id.bottomBar);
+
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            WindowInsetsCompat systemBars = insets;
+            int top = systemBars.getInsets(WindowInsetsCompat.Type.systemBars()).top;
+            int bottom = systemBars.getInsets(WindowInsetsCompat.Type.systemBars()).bottom;
+
+            // AppBar nach unten schieben (Statusbar/Notch)
+            appBar.setPadding(
+                    appBar.getPaddingLeft(),
+                    top,
+                    appBar.getPaddingRight(),
+                    appBar.getPaddingBottom());
+
+            // Bottom-Bar safe-area korrekt (Navigationbar/Gesture)
+            bottomBar.setPadding(
+                    bottomBar.getPaddingLeft(),
+                    bottomBar.getPaddingTop(),
+                    bottomBar.getPaddingRight(),
+                    bottomBar.getPaddingBottom() + bottom);
+
+            return insets;
+        });
+
         edtServerUrl = findViewById(R.id.edtServerUrl);
         edtUsername = findViewById(R.id.edtUsername);
         edtPassword = findViewById(R.id.edtPassword);
@@ -170,7 +211,7 @@ public class AccountSettingsActivity extends AppCompatActivity {
                 edtPassword.setText(BuildConfig.DEV_PASSWORD);
         }
 
-        // *** WICHTIG: Runtime-Permissions sicherstellen ***
+        // Runtime-Permissions sicherstellen
         ensureRequiredPermissions();
 
         Intent intent = getIntent();
@@ -251,6 +292,15 @@ public class AccountSettingsActivity extends AppCompatActivity {
         btnSave.setOnClickListener(v -> saveAccount());
     }
 
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
     /**
      * @brief Setzt Standard-Synchronisierungseinstellungen für ein neues Konto
      *        Wird aufgerufen, wenn ein neues Konto angelegt wird. Die Werte stammen
@@ -295,17 +345,18 @@ public class AccountSettingsActivity extends AppCompatActivity {
         String maxDelay = am.getUserData(account, KerioAccountConstants.KEY_INSTANT_SYNC_MAX_DELAY_SECONDS);
 
         chkPeriodicSyncEnabled.setChecked(!"0".equals(periodicEnabled));
-        edtPeriodicMinutes
-                .setText(TextUtils.isEmpty(intervalMin) ? String.valueOf(KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES)
-                        : intervalMin);
+        edtPeriodicMinutes.setText(TextUtils.isEmpty(intervalMin)
+                ? String.valueOf(KerioSyncScheduler.DEFAULT_PERIODIC_MINUTES)
+                : intervalMin);
 
         chkInstantSyncEnabled.setChecked(!"0".equals(instantEnabled));
-        edtInstantUpdateDelaySeconds.setText(
-                TextUtils.isEmpty(updateDelay) ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS)
-                        : updateDelay);
-        edtInstantMaxDelaySeconds.setText(
-                TextUtils.isEmpty(maxDelay) ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS)
-                        : maxDelay);
+        edtInstantUpdateDelaySeconds.setText(TextUtils.isEmpty(updateDelay)
+                ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_UPDATE_DELAY_SECONDS)
+                : updateDelay);
+
+        edtInstantMaxDelaySeconds.setText(TextUtils.isEmpty(maxDelay)
+                ? String.valueOf(KerioSyncScheduler.DEFAULT_INSTANT_MAX_DELAY_SECONDS)
+                : maxDelay);
     }
 
     /**
@@ -443,7 +494,7 @@ public class AccountSettingsActivity extends AppCompatActivity {
     private void saveAccount() {
         String serverUrl = edtServerUrl.getText().toString().trim();
         String username = edtUsername.getText().toString().trim();
-        String password = edtPassword.getText().toString(); // Passwort nicht trimmen
+        String password = edtPassword.getText().toString();
         boolean trustAll = chkTrustAllCerts.isChecked();
         String trustAllStr = trustAll ? "1" : "0";
         String caUriStr = (mSelectedCaUri != null) ? mSelectedCaUri.toString() : null;

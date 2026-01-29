@@ -1,154 +1,217 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- AppBar / Toolbar (fix oben, Content startet garantiert darunter) -->
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:title="Kerio Sync"
+            app:titleTextColor="@android:color/white"
+            app:navigationIconTint="@android:color/white" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- Bottom-Bar: fix unten + safe-area korrekt via WindowInsets -->
     <LinearLayout
-        android:id="@+id/layoutRoot"
-        android:layout_width="match_parent"
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
-
-        <!-- Kerio-Account Basisdaten -->
-
-        <EditText
-            android:id="@+id/edtServerUrl"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Server-URL (z.B. https://sh-dc1.domain.com/webmail/api/jsonrpc/)"
-            android:inputType="textUri" />
-
-        <EditText
-            android:id="@+id/edtUsername"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:hint="Benutzername (z.B. user@domain.com)"
-            android:inputType="textEmailAddress" />
-
-        <EditText
-            android:id="@+id/edtPassword"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:hint="Passwort"
-            android:inputType="textPassword" />
-
-        <!-- SSL / Zertifikate -->
-
-        <CheckBox
-            android:id="@+id/chkTrustAllCerts"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Alle Zertifikate akzeptieren (unsicher – nur für Tests)" />
-
-        <TextView
-            android:id="@+id/txtSslInfo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Standard: Es werden nur Zertifikate akzeptiert, die vom System als vertrauenswürdig eingestuft sind (System-/Benutzer-CA)." />
-
-        <TextView
-            android:id="@+id/txtCustomCaLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Eigenes CA-Zertifikat für diesen Server:" />
-
-        <TextView
-            android:id="@+id/txtCustomCaInfo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Kein eigenes Zertifikat ausgewählt."
-            android:textAppearance="?android:attr/textAppearanceSmall" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnPickCustomCa"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Zertifikat auswählen" />
-
-            <Button
-                android:id="@+id/btnClearCustomCa"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="Zertifikat entfernen" />
-        </LinearLayout>
-
-        <!-- Sync Einstellungen -->
-
-        <TextView
-            android:id="@+id/txtSyncHeader"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Sync-Einstellungen"
-            android:textStyle="bold" />
-
-        <CheckBox
-            android:id="@+id/chkPeriodicSyncEnabled"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Automatisch synchronisieren (periodisch)" />
-
-        <TextView
-            android:id="@+id/txtPeriodicInfo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Hinweis: Android erlaubt bei SyncAdapter-Periodic effektiv min. 15 Minuten." />
-
-        <EditText
-            android:id="@+id/edtPeriodicMinutes"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="Intervall (Minuten) – z.B. 15"
-            android:inputType="number" />
-
-        <CheckBox
-            android:id="@+id/chkInstantSyncEnabled"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Quasi sofort synchronisieren bei lokalen Änderungen (Sekunden)" />
-
-        <EditText
-            android:id="@+id/edtInstantUpdateDelaySeconds"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="Update-Delay (Sek.) – z.B. 3"
-            android:inputType="number" />
-
-        <EditText
-            android:id="@+id/edtInstantMaxDelaySeconds"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="Max-Delay (Sek.) – z.B. 10"
-            android:inputType="number" />
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
         <Button
             android:id="@+id/btnSave"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
             android:text="Konto speichern" />
-
     </LinearLayout>
-</ScrollView>
+
+    <!-- Scrollbarer Content: sitzt immer zwischen AppBar und BottomBar -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scrollContent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/appBar"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:id="@+id/layoutRoot"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="24dp"
+            android:paddingBottom="24dp">
+
+            <!-- Kerio-Account Basisdaten -->
+
+            <EditText
+                android:id="@+id/edtServerUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Server-URL (z.B. https://sh-dc1.domain.com/webmail/api/jsonrpc/)"
+                android:inputType="textUri" />
+
+            <EditText
+                android:id="@+id/edtUsername"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:hint="Benutzername (z.B. user@domain.com)"
+                android:inputType="textEmailAddress" />
+
+            <EditText
+                android:id="@+id/edtPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:hint="Passwort"
+                android:inputType="textPassword" />
+
+            <!-- SSL / Zertifikate -->
+
+            <CheckBox
+                android:id="@+id/chkTrustAllCerts"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="Alle Zertifikate akzeptieren (unsicher – nur für Tests)" />
+
+            <TextView
+                android:id="@+id/txtSslInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Standard: Es werden nur Zertifikate akzeptiert, die vom System als vertrauenswürdig eingestuft sind (System-/Benutzer-CA)." />
+
+            <TextView
+                android:id="@+id/txtCustomCaLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Eigenes CA-Zertifikat für diesen Server:" />
+
+            <TextView
+                android:id="@+id/txtCustomCaInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Kein eigenes Zertifikat ausgewählt."
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <!-- Responsive Zertifikat-Buttons: Flow bricht automatisch um -->
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/certButtonContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp">
+
+                <Button
+                    android:id="@+id/btnPickCustomCa"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:text="Zertifikat auswählen" />
+
+                <Button
+                    android:id="@+id/btnClearCustomCa"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:text="Zertifikat entfernen" />
+
+                <androidx.constraintlayout.helper.widget.Flow
+                    android:id="@+id/certFlow"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    app:constraint_referenced_ids="btnPickCustomCa,btnClearCustomCa"
+                    app:flow_wrapMode="chain"
+                    app:flow_horizontalGap="8dp"
+                    app:flow_verticalGap="8dp"
+                    app:flow_horizontalStyle="spread"
+                    app:flow_maxElementsWrap="2"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <!-- Sync Einstellungen -->
+
+            <TextView
+                android:id="@+id/txtSyncHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="Sync-Einstellungen"
+                android:textStyle="bold" />
+
+            <CheckBox
+                android:id="@+id/chkPeriodicSyncEnabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Automatisch synchronisieren (periodisch)" />
+
+            <TextView
+                android:id="@+id/txtPeriodicInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Hinweis: Android erlaubt bei SyncAdapter-Periodic effektiv min. 15 Minuten." />
+
+            <EditText
+                android:id="@+id/edtPeriodicMinutes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Intervall (Minuten) – z.B. 15"
+                android:inputType="number" />
+
+            <CheckBox
+                android:id="@+id/chkInstantSyncEnabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Quasi sofort synchronisieren bei lokalen Änderungen (Sekunden)" />
+
+            <EditText
+                android:id="@+id/edtInstantUpdateDelaySeconds"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Update-Delay (Sek.) – z.B. 3"
+                android:inputType="number" />
+
+            <EditText
+                android:id="@+id/edtInstantMaxDelaySeconds"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="Max-Delay (Sek.) – z.B. 10"
+                android:inputType="number" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
